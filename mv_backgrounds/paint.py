@@ -1,624 +1,578 @@
-"""程序化绘制歌曲 MV 背景图（清新风景风格）。
+"""程序化绘制歌曲 MV 竖版背景（电影感 / 极简设计风格，1080x1920）。
 
-用法: python3 paint.py            # 输出 5 张竖屏 1080x1920
+用法:
+    python3 paint.py          # 重画全部 5 张
+    python3 paint.py 03       # 只重画文件名包含 "03" 的那张
 """
 import math
 import os
 import sys
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 OUT = os.path.dirname(os.path.abspath(__file__))
+W, H = 1080, 1920
 
 
+# ---------------------------------------------------------------- 基础工具
 def rgb(h):
     h = h.lstrip("#")
     return np.array([int(h[i:i + 2], 16) for i in (0, 2, 4)], np.float32) / 255
 
 
-class Canvas:
-    def __init__(self, W, H):
-        self.W, self.H = W, H
-        self.s = min(W, H)
-        self.a = np.zeros((H, W, 3), np.float32)
-        self.Y = np.arange(H, dtype=np.float32)[:, None]
-        self.X = np.arange(W, dtype=np.float32)[None, :]
-
-    # 竖直渐变，stops = [(pos 0..1, "#hex"), ...]
-    def gradient(self, stops):
-        t = (self.Y / (self.H - 1)).repeat(self.W, 1)
-        ps = [p for p, _ in stops]
-        for c in range(3):
-            self.a[..., c] = np.interp(t, ps, [rgb(h)[c] for _, h in stops])
-
-    def blend(self, alpha, color):
-        alpha = np.clip(alpha, 0, 1)[..., None]
-        color = np.asarray(color, np.float32)
-        self.a = self.a * (1 - alpha) + color * alpha
-
-    def shape(self, draw_fn, color, alpha=1.0, blur=0):
-        m = Image.new("L", (self.W, self.H), 0)
-        draw_fn(ImageDraw.Draw(m))
-        if blur:
-            m = m.filter(ImageFilter.GaussianBlur(blur))
-        self.blend(np.asarray(m, np.float32) / 255 * alpha, rgb(color) if isinstance(color, str) else color)
-
-    def glow(self, cx, cy, r, color, strength=1.0):
-        d2 = ((self.X - cx) ** 2 + (self.Y - cy) ** 2) / (r * r)
-        g = np.exp(-d2)[..., None] * strength
-        c = rgb(color)
-        self.a = 1 - (1 - self.a) * (1 - np.clip(c * g, 0, 1))  # screen
-
-    def mountain(self, ridge, top, bottom, depth, alpha=1.0):
-        t = np.clip((self.Y - ridge[None, :]) / depth, 0, 1)[..., None]
-        col = rgb(top) * (1 - t) + rgb(bottom) * t
-        a = np.clip(self.Y - ridge[None, :] + 0.5, 0, 1)[..., None] * alpha
-        self.a = self.a * (1 - a) + col * a
-
-    def reflect(self, horizon, tint, strength=0.55, ripple=0.004, fade=0.5):
-        H, W = self.H, self.W
-        hy = int(horizon)
-        src = self.a.copy()
-        for y in range(hy, H):
-            dy = y - hy
-            sy = hy - 1 - int(dy * 1.0)
-            if sy < 0:
-                sy = 0
-            shift = int(math.sin(dy * 0.35) * ripple * self.s * (0.3 + dy / (H - hy)))
-            row = np.roll(src[sy], shift, axis=0)
-            k = strength * (1 - fade * dy / max(1, H - hy))
-            self.a[y] = row * k + rgb(tint) * (1 - k)
-
-    def soften(self, r):
-        im = self.to_image().filter(ImageFilter.GaussianBlur(r))
-        self.a = np.asarray(im, np.float32) / 255
-
-    def finish(self, seed, warm=0.0, vignette=0.18, grain=0.012):
-        rng = np.random.default_rng(seed)
-        cx, cy = self.W / 2, self.H / 2
-        d = np.sqrt(((self.X - cx) / cx) ** 2 + ((self.Y - cy) / cy) ** 2) / math.sqrt(2)
-        self.a *= (1 - vignette * d ** 2)[..., None]
-        if warm:
-            self.a = self.a * (1 - warm) + self.a * np.array([1.06, 1.0, 0.92]) * warm
-        # 水彩纸纹理
-        n = rng.normal(0, 1, (self.H // 3 + 1, self.W // 3 + 1)).astype(np.float32)
-        n = np.asarray(Image.fromarray(((n * 40) + 128).clip(0, 255).astype(np.uint8)).resize(
-            (self.W, self.H), Image.BICUBIC), np.float32) / 255 - 0.5
-        fine = rng.normal(0, 1, (self.H, self.W)).astype(np.float32)
-        self.a += (n * 2 * grain + fine * grain * 0.5)[..., None]
-
-    def to_image(self):
-        return Image.fromarray((np.clip(self.a, 0, 1) * 255 + 0.5).astype(np.uint8))
+def _gauss_fft(a, sigma, axis):
+    n = a.shape[axis]
+    f = np.fft.rfftfreq(n)
+    k = np.exp(-2 * (math.pi * f * sigma) ** 2).astype(np.float32)
+    shape = [1] * a.ndim
+    shape[axis] = len(k)
+    return np.fft.irfft(np.fft.rfft(a, axis=axis) * k.reshape(shape), n=n, axis=axis).astype(np.float32)
 
 
-def ridge(W, rng, base, amp, octaves=6, start=3):
+def blur(a, sx, sy=None):
+    """高斯模糊（float 精度，反射填充避免边缘回卷）。"""
+    sy = sx if sy is None else sy
+    p = int(3 * max(sx, sy)) + 2
+    pad = [(p, p), (p, p)] + [(0, 0)] * (a.ndim - 2)
+    b = np.pad(np.asarray(a, np.float32), pad, mode="reflect")
+    if sx > 0:
+        b = _gauss_fft(b, sx, 1)
+    if sy > 0:
+        b = _gauss_fft(b, sy, 0)
+    return b[p:-p, p:-p]
+
+
+def fbm(rng, scale, octaves=5, persist=0.5):
+    """分形噪声，返回约 0..1。scale = 最大特征尺度（像素）。"""
+    out = np.zeros((H, W), np.float32)
+    amp, tot = 1.0, 0.0
+    for _ in range(octaves):
+        gh, gw = max(2, int(H / scale) + 2), max(2, int(W / scale) + 2)
+        g = Image.fromarray(rng.normal(0, 1, (gh, gw)).astype(np.float32), "F")
+        out += np.asarray(g.resize((W, H), Image.BICUBIC), np.float32) * amp
+        tot += amp
+        amp *= persist
+        scale /= 2
+    out /= tot
+    return np.clip(out * 0.5 + 0.5, 0, 1)
+
+
+def ridge(rng, base, amp, start=3, octaves=6):
     x = np.linspace(0, 1, W)
     y = np.zeros(W)
     a = 1.0
     for o in range(octaves):
         n = start * 2 ** o + 1
-        knots = rng.uniform(-1, 1, n)
-        xs = np.linspace(0, 1, n)
-        # 余弦插值让山形更圆润
+        k = rng.uniform(-1, 1, n)
         idx = np.minimum((x * (n - 1)).astype(int), n - 2)
         f = x * (n - 1) - idx
         f = (1 - np.cos(f * math.pi)) / 2
-        y += (knots[idx] * (1 - f) + knots[idx + 1] * f) * a
+        y += (k[idx] * (1 - f) + k[idx + 1] * f) * a
         a *= 0.5
-    return base - y / 1.9 * amp
+    return (base - y / 1.9 * amp).astype(np.float32)
 
 
-def ellipse_pts(cx, cy, rx, ry, rot, n=40):
-    out = []
+YY = np.arange(H, dtype=np.float32)[:, None]
+XX = np.arange(W, dtype=np.float32)[None, :]
+
+
+def mask(draw_fn, soft=0.7):
+    """用 PIL 画形状得到 0..1 遮罩（2x 超采样抗锯齿）。"""
+    ss = 2
+    m = Image.new("L", (W * ss, H * ss), 0)
+    draw_fn(ImageDraw.Draw(m), ss)
+    m = m.resize((W, H), Image.LANCZOS)
+    a = np.asarray(m, np.float32) / 255
+    return blur(a, soft) if soft else a
+
+
+def radial(cx, cy, r, power=2.0):
+    d = np.sqrt((XX - cx) ** 2 + (YY - cy) ** 2) / r
+    return np.exp(-d ** power)
+
+
+def S(pts, ss):
+    return [(x * ss, y * ss) for x, y in pts]
+
+
+def ell(cx, cy, rx, ry, rot, n=48):
     cr, sr = math.cos(rot), math.sin(rot)
-    for i in range(n):
-        t = 2 * math.pi * i / n
-        x, y = rx * math.cos(t), ry * math.sin(t)
-        out.append((cx + x * cr - y * sr, cy + x * sr + y * cr))
-    return out
+    return [(cx + rx * math.cos(t) * cr - ry * math.sin(t) * sr, cy + rx * math.cos(t) * sr + ry * math.sin(t) * cr)
+            for t in (2 * math.pi * i / n for i in range(n))]
 
 
-def leaf_pts(cx, cy, size, rot):
-    # 枫叶状五裂叶
-    pts = []
-    for i in range(60):
-        t = 2 * math.pi * i / 60
-        r = size * (0.3 + 0.7 * abs(math.cos(2.5 * t)) ** 2.2)
-        x, y = r * math.cos(t), r * math.sin(t)
-        pts.append((cx + x * math.cos(rot) - y * math.sin(rot), cy + x * math.sin(rot) + y * math.cos(rot)))
-    return pts
+class Canvas:
+    def __init__(self):
+        self.a = np.zeros((H, W, 3), np.float32)
 
+    def gradient(self, stops):
+        t = np.broadcast_to(YY / (H - 1), (H, W))
+        ps = [p for p, _ in stops]
+        for ch in range(3):
+            self.a[..., ch] = np.interp(t, ps, [rgb(c)[ch] for _, c in stops])
 
-def butterfly(c, cx, cy, size, rot, color, accent):
-    def wings(d):
-        for side in (-1, 1):
-            r = rot + side * 0.0
-            # 上翅
-            ox = side * size * 0.55
-            d.polygon(ellipse_pts(cx + ox * math.cos(r), cy - size * 0.35 + ox * math.sin(r),
-                                  size * 0.6, size * 0.45, r + side * -0.5), fill=255)
-            ox2 = side * size * 0.4
-            d.polygon(ellipse_pts(cx + ox2 * math.cos(r), cy + size * 0.35 + ox2 * math.sin(r),
-                                  size * 0.38, size * 0.32, r + side * 0.6), fill=255)
+    def over(self, alpha, color):
+        al = np.clip(alpha, 0, 1)
+        if al.ndim == 2:
+            al = al[..., None]
+        col = rgb(color) if isinstance(color, str) else color
+        self.a = self.a * (1 - al) + col * al
 
-    c.glow(cx, cy, size * 2.2, color, 0.35)
-    c.shape(wings, color, 0.95, blur=size * 0.06)
-    c.shape(lambda d: [d.polygon(ellipse_pts(cx + side * size * 0.6, cy - size * 0.38, size * 0.22, size * 0.16, 0),
-                                 fill=255) for side in (-1, 1)], accent, 0.55, blur=size * 0.08)
-    c.shape(lambda d: d.polygon(ellipse_pts(cx, cy, size * 0.08, size * 0.55, rot), fill=255), "#4a3b3a", 0.85)
-    c.shape(lambda d: [d.line([(cx, cy - size * 0.5), (cx + s * size * 0.3, cy - size * 0.95)],
-                              fill=255, width=max(1, int(size * 0.04))) for s in (-1, 1)], "#4a3b3a", 0.7)
+    def add(self, light, color=None, k=1.0):
+        """屏幕叠加光（screen）。"""
+        l = np.clip(light, 0, None)
+        if l.ndim == 2:
+            l = l[..., None] * (rgb(color) if isinstance(color, str) else color)
+        self.a = 1 - (1 - self.a) * (1 - np.clip(l * k, 0, 1))
 
+    def mul(self, m, color):
+        m = np.clip(m, 0, 1)[..., None]
+        self.a = self.a * (1 - m + m * rgb(color))
 
-# ---------------------------------------------------------------- 场景
-def scene_window(W, H, rng):
-    """巷口灯光忽明忽灭 / 手中甜咖啡已冷却 / 在发呆的窗前凝结"""
-    c = Canvas(W, H)
-    s = c.s
-    portrait = H > W
-    wx0, wx1 = (0.12 * W, 0.88 * W) if portrait else (0.22 * W, 0.78 * W)
-    wy0, wy1 = (0.14 * H, 0.70 * H) if portrait else (0.08 * H, 0.76 * H)
-    ww, wh = wx1 - wx0, wy1 - wy0
-
-    # 窗外：黄昏小巷
-    c.gradient([(0, "#3b4c82"), (wy0 / H + 0.25 * wh / H, "#8a8fc4"), (wy0 / H + 0.55 * wh / H, "#f3c2ab"), (1, "#f7dcc4")])
-    c.glow(wx0 + ww * 0.5, wy0 + wh * 0.62, s * 0.5, "#ffd7b0", 0.35)
-    vx, vy = wx0 + ww * 0.52, wy0 + wh * 0.66  # 巷子消失点
-    ground = wy1 + 0.02 * H
-    # 远处屋檐剪影
-    rr = ridge(W, rng, vy - wh * 0.06, wh * 0.06, octaves=3, start=8)
-    c.mountain(np.round(rr / (wh * 0.03)) * (wh * 0.03), "#9a8fb4", "#c7aebb", wh * 0.2)
-    # 两侧墙
-    for side in (-1, 1):
-        xe = wx0 - ww * 0.05 if side < 0 else wx1 + ww * 0.05
-        poly = [(xe, wy0 + wh * 0.18), (vx + side * ww * 0.07, vy - wh * 0.16), (vx + side * ww * 0.07, vy + wh * 0.02), (xe, ground)]
-        c.shape(lambda d, p=poly: d.polygon(p, fill=255), "#6e6a96" if side < 0 else "#7d6f97", 1.0)
-        # 屋檐
-        eave = [(xe, wy0 + wh * 0.18), (vx + side * ww * 0.07, vy - wh * 0.16), (vx + side * ww * 0.09, vy - wh * 0.18), (xe - side * ww * 0.0, wy0 + wh * 0.13)]
-        c.shape(lambda d, p=eave: d.polygon(p, fill=255), "#45436e", 1.0)
-        # 暖黄小窗
-        for k in range(4):
-            f = 0.15 + k * 0.2
-            x = xe + (vx - xe) * f
-            top = (wy0 + wh * 0.18) + ((vy - wh * 0.16) - (wy0 + wh * 0.18)) * f
-            bot = ground + ((vy + wh * 0.02) - ground) * f
-            hgt = (bot - top)
-            sz = ww * 0.05 * (1 - f * 0.8)
-            y = top + hgt * 0.32
-            if rng.random() < 0.8:
-                c.shape(lambda d, x=x, y=y, sz=sz: d.rectangle([x - sz * 0.5, y, x + sz * 0.5, y + sz * 1.2], fill=255), "#ffd48a", 0.9)
-                c.glow(x, y + sz * 0.6, sz * 1.6, "#ffb86b", 0.35)
-    # 石板路
-    road = [(wx0 - ww * 0.05, ground), (vx - ww * 0.07, vy + wh * 0.02), (vx + ww * 0.07, vy + wh * 0.02), (wx1 + ww * 0.05, ground)]
-    c.shape(lambda d: d.polygon(road, fill=255), "#b79fa8", 1.0)
-    c.shape(lambda d: d.polygon([(vx - ww * 0.02, vy + wh * 0.02), (vx + ww * 0.02, vy + wh * 0.02), (wx0 + ww * 0.62, ground), (wx0 + ww * 0.42, ground)], fill=255), "#f6cdb2", 0.35, blur=s * 0.01)
-    # 巷口路灯（忽明忽灭：主光 + 外圈闪烁光晕）
-    lx, ly = wx0 + ww * 0.72, wy0 + wh * 0.40
-    c.shape(lambda d: d.rectangle([lx - s * 0.004, ly, lx + s * 0.004, ground - wh * 0.05], fill=255), "#3a3658", 1.0)
-    c.shape(lambda d: d.line([(lx, ly), (lx - ww * 0.05, ly - wh * 0.01)], fill=255, width=max(2, int(s * 0.006))), "#3a3658", 1.0)
-    hx = lx - ww * 0.05
-    c.shape(lambda d: d.polygon([(hx - s * 0.018, ly + s * 0.01), (hx + s * 0.018, ly + s * 0.01), (hx + s * 0.01, ly - s * 0.012), (hx - s * 0.01, ly - s * 0.012)], fill=255), "#3a3658", 1.0)
-    c.glow(hx, ly + s * 0.015, s * 0.035, "#fffbe6", 1.0)
-    c.glow(hx, ly + s * 0.02, s * 0.12, "#ffd08a", 0.9)
-    c.glow(hx, ly + s * 0.03, s * 0.3, "#ffb07a", 0.35)
-    c.glow(hx, ground - wh * 0.06, s * 0.14, "#ffd9a0", 0.35)
-    c.shape(lambda d: d.polygon([(hx - s * 0.012, ly + s * 0.012), (hx + s * 0.012, ly + s * 0.012), (hx + s * 0.11, ground), (hx - s * 0.11, ground)], fill=255), "#ffe2b0", 0.3, blur=s * 0.02)
-    c.soften(s * 0.0025)
-
-    # 玻璃起雾 & 水珠
-    fog = np.clip((c.Y - (wy0 + wh * 0.55)) / (wh * 0.45), 0, 1) * 0.28
-    c.blend(np.broadcast_to(fog, (H, W)), rgb("#eef0f6"))
-    def drops(d):
-        for _ in range(int(260 * (W * H) / (1080 * 1920))):
-            x = rng.uniform(wx0, wx1)
-            y = rng.uniform(wy0 + wh * 0.35, wy1)
-            r = rng.uniform(0.6, 2.4) * s / 1080
-            d.ellipse([x - r, y - r, x + r, y + r * 1.3], fill=255)
-    c.shape(drops, "#ffffff", 0.35)
-
-    # 室内墙面（窗外以外区域）
-    inner = np.ones((H, W), np.float32)
-    inner[int(wy0):int(wy1), int(wx0):int(wx1)] = 0
-    wall = np.zeros((H, W, 3), np.float32)
-    t = (c.Y / H)[..., None]
-    wall[:] = rgb("#e9dfd3") * (1 - t) + rgb("#c9b9a8") * t
-    c.a = c.a * (1 - inner[..., None]) + wall * inner[..., None]
-    c.glow(wx0 + ww * 0.5, wy0 + wh * 0.5, s * 0.7, "#ffe2c4", 0.2)
-    # 窗框
-    fw = s * 0.022
-    frame = "#f7f2ea"
-    c.shape(lambda d: d.rectangle([wx0 - fw * 3, wy0 - fw * 3, wx1 + fw * 3, wy1 + fw * 3], fill=255), "#000000", 0.18, blur=s * 0.02)
-    def frame_draw(d):
-        d.rectangle([wx0 - fw, wy0 - fw, wx1 + fw, wy0], fill=255)
-        d.rectangle([wx0 - fw, wy1, wx1 + fw, wy1 + fw], fill=255)
-        d.rectangle([wx0 - fw, wy0, wx0, wy1], fill=255)
-        d.rectangle([wx1, wy0, wx1 + fw, wy1], fill=255)
-        mx = (wx0 + wx1) / 2
-        d.rectangle([mx - fw * 0.45, wy0, mx + fw * 0.45, wy1], fill=255)
-        my = wy0 + wh * 0.38
-        d.rectangle([wx0, my - fw * 0.35, wx1, my + fw * 0.35], fill=255)
-    # 将先把整个窗洞也挡一下：先画内墙后再画窗框
-    c.shape(frame_draw, frame, 1.0)
-    # 窗台
-    sy0, sy1 = wy1 + fw, wy1 + fw + s * 0.05
-    c.shape(lambda d: d.rectangle([wx0 - fw * 3, sy0, wx1 + fw * 3, sy1], fill=255), "#d8c3a8", 1.0)
-    c.shape(lambda d: d.rectangle([wx0 - fw * 3, sy0, wx1 + fw * 3, sy0 + s * 0.008], fill=255), "#efe3d1", 1.0)
-    c.shape(lambda d: d.rectangle([wx0 - fw * 3, sy1, wx1 + fw * 3, sy1 + s * 0.03], fill=255), "#000000", 0.12, blur=s * 0.015)
-    # 冷掉的咖啡杯（无热气）
-    mx, mw, mh = wx0 + ww * 0.3, s * 0.11, s * 0.12
-    base = sy0 + s * 0.012
-    c.shape(lambda d: d.ellipse([mx - mw * 0.7, base - s * 0.012, mx + mw * 0.7, base + s * 0.014], fill=255), "#000000", 0.18, blur=s * 0.008)
-    c.shape(lambda d: d.ellipse([mx + mw * 0.32, base - mh * 0.78, mx + mw * 0.78, base - mh * 0.3], outline=255, width=int(s * 0.014)), "#f4ede4", 1.0)
-    c.shape(lambda d: d.rounded_rectangle([mx - mw / 2, base - mh, mx + mw / 2, base], radius=int(s * 0.02), fill=255), "#f4ede4", 1.0)
-    c.shape(lambda d: d.rounded_rectangle([mx - mw / 2, base - mh, mx - mw / 2 + mw * 0.25, base], radius=int(s * 0.02), fill=255), "#d9cfc4", 0.6, blur=s * 0.006)
-    c.shape(lambda d: d.ellipse([mx - mw / 2, base - mh - s * 0.012, mx + mw / 2, base - mh + s * 0.012], fill=255), "#e9e0d6", 1.0)
-    c.shape(lambda d: d.ellipse([mx - mw / 2 + s * 0.006, base - mh - s * 0.008, mx + mw / 2 - s * 0.006, base - mh + s * 0.010], fill=255), "#7a5440", 1.0)
-    # 小绿植
-    px = wx0 + ww * 0.78
-    c.shape(lambda d: d.polygon([(px - s * 0.035, base - s * 0.07), (px + s * 0.035, base - s * 0.07), (px + s * 0.026, base), (px - s * 0.026, base)], fill=255), "#d99a7c", 1.0)
-    def leaves(d):
-        for k in range(9):
-            a = -math.pi / 2 + (k - 4) * 0.28
-            L = s * rng.uniform(0.06, 0.1)
-            d.polygon(ellipse_pts(px + math.cos(a) * L * 0.5, base - s * 0.07 + math.sin(a) * L * 0.5, L * 0.5, L * 0.16, a), fill=255)
-    c.shape(leaves, "#7fae7c", 1.0)
-    c.finish(1, warm=0.3, vignette=0.22)
-    return c
-
-
-def scene_spring(W, H, rng):
-    """你看啊春日的蝴蝶 / 和风与暖阳倾斜"""
-    c = Canvas(W, H)
-    s = c.s
-    hz = 0.58 * H
-    c.gradient([(0, "#9fd3ef"), (0.35, "#cfe9f3"), (hz / H, "#fff2dc"), (1, "#fff2dc")])
-    sx, sy = 0.12 * W, 0.1 * H
-    c.glow(sx, sy, s * 0.25, "#fff6d8", 0.9)
-    c.glow(sx, sy, s * 0.7, "#ffe6b8", 0.4)
-    # 倾斜的暖阳光束
-    def rays(d):
-        for k in range(6):
-            a = 0.35 + k * 0.13 + rng.uniform(-0.03, 0.03)
-            w = rng.uniform(0.02, 0.05)
-            L = 2.5 * max(W, H)
-            d.polygon([(sx, sy), (sx + L * math.cos(a - w), sy + L * math.sin(a - w)), (sx + L * math.cos(a + w), sy + L * math.sin(a + w))], fill=255)
-    c.shape(rays, "#fff4d6", 0.22, blur=s * 0.03)
-    # 云
-    def clouds(d):
-        for _ in range(5):
-            cx, cy = rng.uniform(0.3, 1.0) * W, rng.uniform(0.08, 0.3) * H
-            for _ in range(7):
-                r = s * rng.uniform(0.03, 0.07)
-                ox, oy = rng.uniform(-3, 3) * r, rng.uniform(-0.4, 0.3) * r
-                d.ellipse([cx + ox - r * 1.5, cy + oy - r, cx + ox + r * 1.5, cy + oy + r], fill=255)
-    c.shape(clouds, "#ffffff", 0.75, blur=s * 0.012)
-    c.mountain(ridge(W, rng, hz - 0.05 * H, 0.12 * H), "#a9c6d8", "#d8e6e3", 0.15 * H)
-    c.mountain(ridge(W, rng, hz + 0.02 * H, 0.09 * H, start=2), "#9cc9a4", "#cfe5b8", 0.2 * H)
-    c.mountain(ridge(W, rng, hz + 0.12 * H, 0.08 * H, start=2), "#a8d48a", "#d6eb9c", 0.4 * H)
-    # 樱花树（右侧）
-    tx, tb = 0.82 * W, hz + 0.2 * H
-    c.shape(lambda d: d.polygon([(tx - s * 0.02, tb), (tx + s * 0.02, tb), (tx + s * 0.008, tb - 0.2 * H), (tx - s * 0.012, tb - 0.2 * H)], fill=255), "#7b5e57", 1.0)
-    c.shape(lambda d: [d.line([(tx, tb - 0.15 * H), (tx + a * s * 0.15, tb - 0.25 * H)], fill=255, width=int(s * 0.012)) for a in (-1, 0.6)], "#7b5e57", 1.0)
-    for col, al in (("#f6b7c8", 1.0), ("#fbd3df", 0.9), ("#fff0f4", 0.7)):
-        def canopy(d):
-            for _ in range(28):
-                r = s * rng.uniform(0.03, 0.07)
-                cx = tx + rng.normal(0, s * 0.12)
-                cy = tb - 0.25 * H + rng.normal(0, s * 0.07)
-                d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=255)
-        c.shape(canopy, col, al, blur=s * 0.004)
-    # 花海
-    for col in ("#ffffff", "#ffd6e3", "#fff3a6", "#c9b6ef"):
-        def flowers(d):
-            for _ in range(int(500 * W / 1080)):
-                y = rng.uniform(hz + 0.12 * H, H)
-                f = (y - hz) / (H - hz)
-                r = s * 0.004 * (0.5 + 3 * f ** 2) * rng.uniform(0.7, 1.3)
-                x = rng.uniform(0, W)
-                d.ellipse([x - r, y - r * 0.8, x + r, y + r * 0.8], fill=255)
-        c.shape(flowers, col, 0.9)
-    # 飘落花瓣
-    def petals(d):
-        for _ in range(int(60 * W / 1080)):
-            x, y = rng.uniform(0, W), rng.uniform(0, H)
-            r = s * rng.uniform(0.004, 0.009)
-            d.polygon(ellipse_pts(x, y, r * 1.4, r * 0.8, rng.uniform(0, math.pi)), fill=255)
-    c.shape(petals, "#f8c4d4", 0.85)
-    # 颤抖着飞越的蝴蝶 + 飞行轨迹
-    path = [(0.2, 0.62), (0.38, 0.5), (0.55, 0.44), (0.66, 0.36)] if H > W else [(0.25, 0.6), (0.42, 0.46), (0.58, 0.4), (0.68, 0.3)]
-    def trail(d):
-        for i in range(len(path) - 1):
-            (x0, y0), (x1, y1) = path[i], path[i + 1]
-            for k in range(14):
-                f = k / 14
-                x = (x0 + (x1 - x0) * f) * W
-                y = (y0 + (y1 - y0) * f) * H + math.sin(f * 9 + i) * s * 0.012
-                r = s * 0.0022
-                d.ellipse([x - r, y - r, x + r, y + r], fill=255)
-    c.shape(trail, "#ffffff", 0.7, blur=1)
-    for (fx, fy), sz, col, acc in zip(path, (0.025, 0.03, 0.037, 0.045), ("#fffdf3", "#fff1a8", "#d8ecff", "#ffffff"), ("#f4c26b", "#f2a3b8", "#7fb3e6", "#a6c9f0")):
-        butterfly(c, fx * W, fy * H, s * sz, rng.uniform(-0.3, 0.3), col, acc)
-    c.finish(2, warm=0.15, vignette=0.12)
-    return c
-
-
-def scene_summer(W, H, rng):
-    """你看啊仲夏的弯月 / 倒挂天际的笑靥"""
-    c = Canvas(W, H)
-    s = c.s
-    hz = 0.6 * H
-    c.gradient([(0, "#2c3f7c"), (0.3, "#4f68a8"), (0.5, "#8d9fd0"), (hz / H, "#c9c3e0"), (1, "#c9c3e0")])
-    def stars(d):
-        for _ in range(int(700 * W * H / (1080 * 1920))):
-            x, y = rng.uniform(0, W), rng.uniform(0, hz) ** 1.0
-            y = rng.uniform(0, 1) ** 1.6 * hz
-            r = rng.uniform(0.4, 1.8) * s / 1080
-            d.ellipse([x - r, y - r, x + r, y + r], fill=int(rng.uniform(120, 255)))
-    c.shape(stars, "#ffffff", 1.0)
-    for _ in range(14):
-        c.glow(rng.uniform(0, W), rng.uniform(0, 0.45) * H, s * 0.006, "#dfe8ff", 0.8)
-    # 银河薄雾
-    c.shape(lambda d: d.polygon([(0, 0.3 * H), (W, 0.02 * H), (W, 0.14 * H), (0, 0.44 * H)], fill=255), "#9fb3e6", 0.12, blur=s * 0.06)
-    # 笑脸弯月（两角朝上）
-    mx, my, mr = 0.5 * W, 0.22 * H, s * 0.11
-    c.glow(mx, my + mr * 0.4, mr * 2.5, "#9fb6e8", 0.4)
-    m = Image.new("L", (W, H), 0)
-    d = ImageDraw.Draw(m)
-    d.ellipse([mx - mr, my - mr, mx + mr, my + mr], fill=255)
-    d.ellipse([mx - mr * 1.02, my - mr * 1.4, mx + mr * 1.02, my + mr * 0.62], fill=0)
-    m = m.filter(ImageFilter.GaussianBlur(s * 0.0015))
-    c.blend(np.asarray(m, np.float32) / 255, rgb("#fff6d6"))
-    c.glow(mx, my + mr * 0.75, mr * 0.9, "#fff1c0", 0.35)
-    # 远山与湖
-    c.mountain(ridge(W, rng, hz - 0.06 * H, 0.1 * H), "#7183b8", "#a3abd2", 0.1 * H)
-    c.mountain(ridge(W, rng, hz - 0.01 * H, 0.05 * H, start=2), "#55669e", "#7385b8", 0.06 * H)
-    c.reflect(hz, "#5a6fa6", strength=0.7, ripple=0.003)
-    # 月光倒影
-    def moonpath(d):
-        for _ in range(int(220 * H / 1920)):
-            y = rng.uniform(hz + 0.005 * H, H)
-            f = (y - hz) / (H - hz)
-            w = s * (0.02 + 0.1 * f) * rng.uniform(0.3, 1)
-            x = mx + rng.normal(0, s * (0.03 + 0.09 * f))
-            hgt = max(1, s * 0.002 * (1 + 2 * f))
-            d.rectangle([x - w / 2, y, x + w / 2, y + hgt], fill=255)
-    c.shape(moonpath, "#fff1c8", 0.55, blur=0.6)
-    # 前景芦苇
-    def reeds(d):
-        for _ in range(int(90 * W / 1080)):
-            x0 = rng.uniform(-0.05, 1.05) * W
-            if abs(x0 - mx) < 0.18 * W and rng.random() < 0.8:
+    def bokeh(self, items, soft=1.2):
+        """items: (x, y, r, color, intensity) 虚化光斑，边缘略亮更像镜头焦外。"""
+        layer = np.zeros((H, W, 3), np.float32)
+        for x, y, r, col, inten in items:
+            x0, x1 = int(max(0, x - r - 3)), int(min(W, x + r + 4))
+            y0, y1 = int(max(0, y - r - 3)), int(min(H, y + r + 4))
+            if x0 >= x1 or y0 >= y1:
                 continue
-            h = rng.uniform(0.08, 0.3) * H
-            bend = rng.uniform(-0.04, 0.04) * W
-            pts = [(x0 + bend * (k / 10) ** 2, H - h * k / 10) for k in range(11)]
-            d.line(pts, fill=255, width=max(2, int(s * 0.004)))
-            tx, ty = pts[-1]
-            if rng.random() < 0.6:
-                d.polygon(ellipse_pts(tx, ty - s * 0.02, s * 0.006, s * 0.028, bend / W * 3), fill=255)
-    c.shape(reeds, "#2b3b6b", 0.95)
-    # 萤火虫
-    for _ in range(int(40 * W / 1080)):
-        x, y = rng.uniform(0, W), rng.uniform(hz - 0.05 * H, H)
-        c.glow(x, y, s * rng.uniform(0.004, 0.009), "#e6ff9a", 1.0)
-        c.glow(x, y, s * 0.03, "#c8f07a", 0.15)
-    c.finish(3, vignette=0.15)
+            gy, gx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
+            d = np.sqrt((gx - x) ** 2 + (gy - y) ** 2)
+            disc = np.clip(r - d + 0.8, 0, 1)
+            ring = 0.72 + 0.28 * np.clip(d / max(r, 1), 0, 1) ** 3
+            layer[y0:y1, x0:x1] += (disc * ring * inten)[..., None] * rgb(col)
+        self.add(blur(layer, soft))
+
+    def finish(self, seed, grain=0.022, vignette=0.22, lift=0.035, warm=0.0, sat=1.0):
+        rng = np.random.default_rng(seed)
+        a = self.a
+        lum = (a @ np.array([0.299, 0.587, 0.114], np.float32))[..., None]
+        a = lum + (a - lum) * sat
+        if warm:
+            a = a * (1 + np.array([0.04, 0.0, -0.05], np.float32) * warm)
+        # 柔和 S 曲线 + 抬黑（胶片哑光感）
+        a = np.clip(a, 0, 1)
+        a = a + 0.12 * (a - 0.5) * (1 - np.abs(2 * a - 1))
+        a = lift + (1 - lift * 1.4) * a
+        # 暗角
+        d = np.sqrt(((XX - W / 2) / (W / 2)) ** 2 + ((YY - H / 2) / (H / 2)) ** 2) / math.sqrt(2)
+        a = a * (1 - vignette * d ** 2.2)[..., None]
+        # 胶片颗粒（中间调更明显）
+        lum = a @ np.array([0.299, 0.587, 0.114], np.float32)
+        g = blur(rng.normal(0, 1, (H, W)).astype(np.float32), 0.55) * 1.6
+        a = a + (g * grain * (0.35 + 0.65 * (1 - np.abs(2 * lum - 1))))[..., None]
+        self.a = a
+
+    def save(self, path):
+        d = np.random.default_rng(0).uniform(-0.5, 0.5, self.a.shape) / 255  # 抖动，避免渐变色带
+        im = Image.fromarray((np.clip(self.a + d, 0, 1) * 255 + 0.5).astype(np.uint8))
+        im.save(path, quality=95, subsampling=0)
+
+
+def mirror_water(c, hz, squash, bx, by, tint, k_tint):
+    """把地平线以上的画面翻转成水面倒影，并做横向模糊。"""
+    h = int(hz)
+    sky = c.a[:h].copy()
+    n_w = H - h
+    idx = np.clip(h - 1 - (np.arange(n_w) * squash).astype(int), 0, h - 1)
+    water = np.stack([blur(sky[idx][..., k], bx, by) for k in range(3)], -1)
+    t = (np.arange(n_w, dtype=np.float32) / n_w)[:, None, None]
+    kt = k_tint[0] + (k_tint[1] - k_tint[0]) * t
+    c.a[h:] = water * (1 - kt) + rgb(tint) * kt
+
+
+# ---------------------------------------------------------------- 1 巷口暖灯 · 冷咖啡 · 窗边夜色
+def scene_window(rng):
+    c = Canvas()
+    c.gradient([(0, "#16233b"), (0.35, "#22344f"), (0.62, "#2c3d57"), (1, "#1c2638")])
+    # 虚化的巷子：两侧楼体剪影
+    bld = np.zeros((H, W), np.float32)
+    for x0, x1, top in ((0, 0.3, 0.2), (0.25, 0.42, 0.38), (0.58, 0.74, 0.34), (0.7, 1.0, 0.16)):
+        bld[int(top * H):int(0.78 * H), int(x0 * W):int(x1 * W)] = 1
+    c.over(blur(bld, 26) * 0.75, "#0a101b")
+    lx, ly = 0.68 * W, 0.40 * H
+    # 地面湿反光
+    c.add(blur((YY > 0.66 * H) * radial(lx, 0.72 * H, 0.35 * W, 1.5), 30) * 0.35, "#e0a36a")
+    # 巷口路灯：大光斑 + 柔光 + 外圈光晕（忽明忽灭）
+    c.add(radial(lx, ly, 0.42 * W, 1.3) * 0.32, "#d98a4e")
+    c.add(radial(lx, ly, 0.16 * W, 1.6) * 0.55, "#ffb871")
+    c.bokeh([(lx, ly, 0.075 * W, "#ffd59c", 1.0)], soft=2.0)
+    ringd = np.sqrt((XX - lx) ** 2 + (YY - ly) ** 2)
+    c.add(np.exp(-((ringd - 0.13 * W) / (0.01 * W)) ** 2) * 0.10, "#ffcf9a")
+    # 远处窗灯与车灯光斑
+    items = []
+    for _ in range(46):
+        x = rng.uniform(0, W)
+        y = rng.uniform(0.24, 0.7) * H
+        if abs(x - lx) < 0.12 * W and abs(y - ly) < 0.08 * H:
+            continue
+        r = rng.uniform(0.012, 0.045) * W
+        col = rng.choice(["#ffc684", "#ffb36b", "#ffd9a8", "#9fc3ff", "#e8d9ff"], p=[0.35, 0.25, 0.2, 0.12, 0.08])
+        items.append((x, y, r, col, rng.uniform(0.12, 0.45)))
+    c.bokeh(items, soft=1.5)
+    # 玻璃上的雾气（被灯光照亮），以及被水滴划开的清晰轨迹
+    fog = fbm(rng, 500, 5) * 0.5 + fbm(rng, 60, 3) * 0.5
+    fog = np.clip((fog - 0.35) * 1.6, 0, 1) * (0.18 + 0.25 * np.clip((YY / H - 0.45) * 2, 0, 1))
+    wipe = np.zeros((H, W), np.float32)
+    trails = []
+    for _ in range(5):
+        x = rng.uniform(0.05, 0.95) * W
+        y0, y1 = rng.uniform(0.05, 0.4) * H, rng.uniform(0.55, 0.8) * H
+        xs = x + np.cumsum(rng.normal(0, 0.6, int(y1 - y0)))
+        trails.append((xs[-1], y1))
+        for i, xx in enumerate(xs):
+            wipe[int(y0) + i, int(max(0, xx - 3)):int(min(W, xx + 4))] = 1
+    fog *= np.clip(1 - blur(wipe, 2.5) * 1.2, 0.35, 1)
+    lampfog = radial(lx, ly, 0.5 * W, 1.2)
+    c.add(fog * (0.5 + 1.6 * lampfog), "#b9c6da")
+    # 水珠：暗边 + 底部折射亮光 + 左上高光
+    drops = np.zeros((H, W), np.float32)
+    spec = np.zeros((H, W), np.float32)
+    rims = np.zeros((H, W), np.float32)
+
+    def put(x, y, r):
+        x0, x1 = int(max(0, x - r - 2)), int(min(W, x + r + 3))
+        y0, y1 = int(max(0, y - r * 1.2 - 2)), int(min(H, y + r * 1.2 + 3))
+        if x0 >= x1 or y0 >= y1:
+            return
+        gy, gx = np.mgrid[y0:y1, x0:x1].astype(np.float32)
+        d = np.sqrt(((gx - x) / r) ** 2 + ((gy - y) / (r * 1.12)) ** 2)
+        inside = np.clip((1 - d) * r, 0, 1)
+        sl = (slice(y0, y1), slice(x0, x1))
+        drops[sl] = np.maximum(drops[sl], inside * np.clip((gy - y) / r * 0.5 + 0.5, 0, 1))
+        rims[sl] = np.maximum(rims[sl], inside * np.clip(d - 0.65, 0, 1) * 2.5)
+        hs = np.sqrt((gx - (x - r * 0.35)) ** 2 + (gy - (y - r * 0.4)) ** 2) / (r * 0.22)
+        spec[sl] = np.maximum(spec[sl], np.exp(-hs ** 2))
+
+    for _ in range(420):
+        y = rng.uniform(0.0, 0.86) ** 0.8 * H
+        put(rng.uniform(0, W), y, rng.uniform(1.5, 5.5) * (0.6 + 0.8 * y / H))
+    for x, y in trails:
+        put(x, y, rng.uniform(7, 11))
+    c.over(rims * 0.55, "#070b14")
+    c.add(drops * (0.25 + 0.9 * lampfog), "#ffd8a6")
+    c.add(spec * (0.5 + 0.6 * lampfog), "#fff4e4")
+    # 窗台
+    sill = 0.86 * H
+    c.over(np.broadcast_to((YY > sill).astype(np.float32), (H, W)), "#1a202c")
+    c.add((YY > sill) * radial(lx, sill, 0.5 * W, 1.4) * 0.12, "#ffb978")
+    c.add(np.exp(-((YY - sill) / 2.2) ** 2) * radial(lx, sill, 0.6 * W, 1.5) * 0.7, "#ffcf98")
+    # 冷掉的咖啡杯（逆光剪影 + 右侧暖色轮廓光，没有热气）
+    mx, mw, mh = 0.3 * W, 0.17 * W, 0.105 * H
+
+    def mug(d, ss):
+        d.rounded_rectangle(S([(mx - mw / 2, sill - mh), (mx + mw / 2, sill)], ss), radius=int(0.022 * W * ss), fill=255)
+        d.ellipse(S([(mx + mw * 0.36, sill - mh * 0.82), (mx + mw * 0.86, sill - mh * 0.28)], ss), outline=255, width=int(0.016 * W * ss))
+
+    mm = mask(mug, 0.9)
+    c.over(mm, "#0d121c")
+    rim = np.clip(mm - np.roll(mm, -5, axis=1), 0, 1) + np.clip(mm - np.roll(mm, 4, axis=0), 0, 1) * 0.5
+    c.add(blur(rim, 1.2) * 0.8, "#ffbf7e")
+    c.add(blur(np.clip(mm - np.roll(mm, -2, axis=1), 0, 1), 0.6) * 0.6, "#ffe1b5")
+    # 杯口液面的一圈微光
+    c.add(mask(lambda d, ss: d.ellipse(S([(mx - mw * 0.42, sill - mh - 0.004 * H), (mx + mw * 0.42, sill - mh + 0.006 * H)], ss), outline=255, width=2 * ss), 0.8) * 0.35, "#c79a74")
+    # 杯子在窗台上的倒影
+    refl = np.zeros((H, W), np.float32)
+    top = int(sill - mh)
+    n = H - int(sill)
+    refl[int(sill):] = mm[int(sill) - 1 - np.arange(n).clip(0, int(sill) - top)][:n]
+    c.add(blur(refl, 6) * 0.07, "#ffbf7e")
+    c.finish(11, grain=0.026, vignette=0.24, lift=0.045, sat=0.95)
     return c
 
 
-def scene_autumn(W, H, rng):
-    """你听啊秋末的落叶 / 你听它叹息着离别"""
-    c = Canvas(W, H)
-    s = c.s
-    hz = 0.56 * H
-    c.gradient([(0, "#f3d9c4"), (0.3, "#fbe6cf"), (hz / H, "#fff3dc"), (1, "#fff3dc")])
-    c.glow(0.7 * W, hz - 0.08 * H, s * 0.3, "#ffe1a8", 0.6)
-    c.mountain(ridge(W, rng, hz - 0.12 * H, 0.16 * H), "#b7a7c4", "#e3d3d6", 0.2 * H)
-    c.mountain(ridge(W, rng, hz - 0.05 * H, 0.1 * H), "#a39ab8", "#d9c3bf", 0.1 * H)
-    r = ridge(W, rng, hz - 0.01 * H, 0.06 * H, start=2)
-    c.mountain(r, "#c98a5e", "#d9a36b", 0.05 * H)
-    # 秋林
-    for cols in (("#c4583c", "#e08a3c", "#f0b24a"), ("#d86b3e", "#eaa04a", "#f5c768")):
-        for col in cols:
-            def trees(d, col=col):
-                for _ in range(int(160 * W / 1080)):
-                    x = rng.uniform(0, W)
-                    y = r[int(min(W - 1, max(0, x)))] + rng.uniform(-0.01, 0.03) * H
-                    rr = s * rng.uniform(0.01, 0.025)
-                    d.ellipse([x - rr, y - rr * 1.3, x + rr, y + rr], fill=255)
-            c.shape(trees, col, 0.9, blur=s * 0.002)
-    c.mountain(np.full(W, hz, np.float32), "#d9a36b", "#d9a36b", 1, alpha=1.0)
-    c.reflect(hz, "#e9d7c6", strength=0.6, ripple=0.004)
-    # 湖面波纹
-    def ripples(d):
-        for _ in range(int(80 * H / 1920)):
-            y = rng.uniform(hz + 0.01 * H, H)
-            w = s * rng.uniform(0.05, 0.25)
-            x = rng.uniform(0, W)
-            d.line([(x - w / 2, y), (x + w / 2, y)], fill=255, width=max(1, int(s * 0.0015)))
-    c.shape(ripples, "#fff6ea", 0.4)
-    # 右上探出的枝条
-    bx, by = W, 0.03 * H
-    pts = [(bx - W * 0.55 * k / 10, by + (0.12 * H) * (k / 10) ** 1.6) for k in range(11)]
-    c.shape(lambda d: d.line(pts, fill=255, width=int(s * 0.012), joint="curve"), "#5c4136", 1.0)
-    for col in ("#c4483a", "#e07a3a", "#f2b04c"):
-        def bleaves(d):
-            for k in range(14):
-                px, py = pts[rng.integers(2, 11)]
-                sz = s * rng.uniform(0.025, 0.04)
-                d.polygon(leaf_pts(px + rng.normal(0, s * 0.03), py + rng.uniform(0, s * 0.06), sz, rng.uniform(0, 6.28)), fill=255)
-        c.shape(bleaves, col, 1.0, blur=0.8)
-    # 飘落的叶子（远小近大，近处虚化）
-    for k in range(3):
-        for col in ("#c4483a", "#e07a3a", "#f2b04c", "#b8642f"):
-            def fall(d, k=k):
-                n = (5, 2, 1)[k]
-                for _ in range(int(n * W / 1080) + 1):
-                    sz = s * (0.012, 0.022, 0.05)[k] * rng.uniform(0.7, 1.3)
-                    d.polygon(leaf_pts(rng.uniform(0, W), rng.uniform(0.1, 0.95) * H, sz, rng.uniform(0, 6.28)), fill=255)
-            c.shape(fall, col, 0.95, blur=(0.5, 1, s * 0.006)[k])
-    c.finish(4, warm=0.2, vignette=0.16)
+# ---------------------------------------------------------------- 2 春日蝴蝶 · 和风 · 暖阳 · 草地与花影
+def scene_spring(rng):
+    c = Canvas()
+    hz = 0.6 * H
+    c.gradient([(0, "#cfe3ea"), (0.25, "#e6eee6"), (0.5, "#eef0dc"), (hz / H, "#c6d9a8"), (0.8, "#98ba78"), (1, "#6f9560")])
+    sx, sy = 0.06 * W, 0.08 * H
+    # 远处树影，空气透视
+    tree = ridge(rng, hz - 0.035 * H, 0.06 * H, start=6)
+    c.over(blur((YY > tree[None, :]).astype(np.float32), 8) * 0.7 * (YY < hz + 0.02 * H), "#9db890")
+    # 草地纹理
+    tex = fbm(rng, 120, 5)
+    c.mul(np.clip((tex - 0.5) * 0.6, 0, 1) * (YY > hz), "#7f9a64")
+
+    # 倾斜的暖阳光束
+    def ray_draw(d, ss):
+        for k in range(7):
+            a = 0.62 + k * 0.1 + rng.uniform(-0.03, 0.03)
+            w = rng.uniform(0.015, 0.04)
+            L = 2.4 * H
+            d.polygon(S([(sx, sy), (sx + L * math.cos(a - w), sy + L * math.sin(a - w)), (sx + L * math.cos(a + w), sy + L * math.sin(a + w))], ss), fill=int(rng.uniform(120, 255)))
+
+    rays = blur(mask(ray_draw, 0), 22) * np.clip(1 - np.sqrt((XX - sx) ** 2 + (YY - sy) ** 2) / (1.6 * H), 0, 1)
+    c.add(rays * 0.28, "#fff1cf")
+    c.add(radial(sx, sy, 0.7 * W, 1.1) * 0.55, "#fff0cc")
+    c.add(radial(sx, sy, 0.12 * W, 1.6) * 0.9, "#ffffff")
+    # 镜头鬼影
+    for t, r, a in ((0.45, 0.03, 0.06), (0.62, 0.05, 0.05), (0.9, 0.09, 0.035)):
+        c.bokeh([(sx + (W / 2 - sx) * 2 * t, sy + (H / 2 - sy) * 2 * t, r * W, "#d9f0c8", a)], soft=3)
+    # 花影：斑驳的树叶阴影投在草地上
+    dap = fbm(rng, 40, 4)
+    dap = blur(np.clip((dap - 0.52) * 6, 0, 1), 3) * np.clip((YY - hz) / (0.15 * H), 0, 1) * np.clip((XX - 0.3 * W) / (0.6 * W), 0, 1)
+    c.mul(dap * 0.3, "#7d9a72")
+    # 野花：焦外光斑
+    items = []
+    for _ in range(170):
+        y = rng.uniform(hz + 0.01 * H, H)
+        f = (y - hz) / (H - hz)
+        r = (0.003 + 0.03 * f ** 2) * W * rng.uniform(0.6, 1.3)
+        col = rng.choice(["#ffffff", "#fde3ea", "#fff1b8", "#e9dcff"], p=[0.45, 0.3, 0.15, 0.1])
+        items.append((rng.uniform(0, W), y, r, col, rng.uniform(0.35, 0.8)))
+    c.bokeh(items, soft=1.0)
+    # 光中漂浮的花粉
+    c.bokeh([(rng.uniform(0, W * 0.8), rng.uniform(0.05, 0.6) * H, rng.uniform(1.5, 9), "#fff6e0", rng.uniform(0.2, 0.6)) for _ in range(60)], soft=1.2)
+    # 草叶：远处清晰，近处大幅虚化；统一向右倾（和风）
+    for layer, (n, hmin, hmax, wd, bl, col, al) in enumerate((
+            (900, 0.01, 0.03, 1, 0.4, "#7d9a5e", 0.8),
+            (260, 0.04, 0.09, 2, 1.2, "#6a8a55", 0.85),
+            (60, 0.12, 0.3, 6, 9, "#4f6f45", 0.9))):
+        def grass(d, ss):
+            for _ in range(n):
+                x = rng.uniform(-0.05, 1.05) * W
+                y = rng.uniform(hz + 0.02 * H, H) if layer == 0 else rng.uniform(0.86 + 0.05 * layer, 1.02) * H
+                h = rng.uniform(hmin, hmax) * H
+                lean = rng.uniform(0.15, 0.45) * h
+                pts = [(x + lean * (k / 8) ** 2, y - h * k / 8) for k in range(9)]
+                d.line(S(pts, ss), fill=255, width=wd * ss)
+        c.over(blur(mask(grass, 0), bl) * al, col)
+
+    # 蝴蝶：一只清晰（逆光半透明翅膀），一只远处虚化
+    def fly(bx, by, sz, rot, bl, al):
+        def wings(d, ss):
+            for sd in (-1, 1):
+                d.polygon(S(ell(bx + sd * sz * 0.5, by - sz * 0.25, sz * 0.55, sz * 0.36, rot + sd * -0.55), ss), fill=255)
+                d.polygon(S(ell(bx + sd * sz * 0.34, by + sz * 0.28, sz * 0.32, sz * 0.26, rot + sd * 0.7), ss), fill=255)
+        m = mask(wings, bl)
+        c.over(m * 0.85 * al, "#f3d89a")
+        c.over(np.clip(m - blur(m, 3), 0, 1) * 0.9 * al, "#8a6a48")
+        c.add(m * 0.25 * al, "#fff2cf")
+        body = mask(lambda d, ss: d.polygon(S(ell(bx, by, sz * 0.05, sz * 0.42, rot), ss), fill=255), bl)
+        c.over(body * 0.8 * al, "#5b4a3d")
+        c.add(radial(bx, by, sz * 1.8) * 0.18 * al, "#fff5dc")
+
+    fly(0.6 * W, 0.44 * H, 0.05 * W, 0.25, 0.6, 1.0)
+    fly(0.34 * W, 0.53 * H, 0.03 * W, -0.3, 3.0, 0.7)
+    fly(0.8 * W, 0.36 * H, 0.022 * W, 0.4, 1.5, 0.8)
+    c.finish(12, grain=0.018, vignette=0.14, lift=0.03, warm=0.5, sat=1.0)
     return c
 
 
-def scene_sea(W, H, rng):
-    """只剩我独自领略 / 海与山 风和月"""
-    c = Canvas(W, H)
-    s = c.s
-    hz = 0.55 * H
-    c.gradient([(0, "#38497c"), (0.25, "#7d82b6"), (0.45, "#d7aac4"), (hz / H, "#f8d2b6"), (1, "#f8d2b6")])
-    mx, my, mr = 0.66 * W, hz - 0.17 * H, s * 0.075
-    c.glow(mx, my, mr * 4, "#ffe9d6", 0.35)
-    c.shape(lambda d: d.ellipse([mx - mr, my - mr, mx + mr, my + mr], fill=255), "#fff8ec", 1.0, blur=s * 0.002)
-    c.shape(lambda d: [d.ellipse([mx + ox * mr - rr * mr, my + oy * mr - rr * mr, mx + ox * mr + rr * mr, my + oy * mr + rr * mr], fill=255)
-                       for ox, oy, rr in ((-0.3, -0.2, 0.25), (0.25, 0.2, 0.18), (0.1, -0.4, 0.12))], "#f1dccf", 0.4, blur=s * 0.006)
-    # 风：几道柔和的弧线
-    def wind(d):
-        for k in range(6):
-            y0 = rng.uniform(0.08, 0.38) * H
-            x0 = rng.uniform(-0.2, 0.5) * W
-            L = rng.uniform(0.3, 0.6) * W
-            pts = [(x0 + L * t / 30, y0 + math.sin(t / 30 * math.pi * 1.4 + k) * s * 0.03) for t in range(31)]
-            d.line(pts, fill=255, width=max(2, int(s * 0.003)))
-    c.shape(wind, "#ffffff", 0.35, blur=s * 0.002)
-    def wisps(d):
-        for _ in range(8):
-            cx, cy = rng.uniform(0, W), rng.uniform(0.1, 0.4) * H
-            w = s * rng.uniform(0.15, 0.35)
-            d.ellipse([cx - w, cy - s * 0.01, cx + w, cy + s * 0.012], fill=255)
-    c.shape(wisps, "#f7d6dc", 0.35, blur=s * 0.012)
-    # 远山与海
-    rr = ridge(W, rng, hz - 0.04 * H, 0.08 * H)
-    rr = np.minimum(rr + np.clip((c.X[0] - 0.55 * W) / W, 0, 1) * 0.15 * H, hz)
-    c.mountain(rr, "#8d86b0", "#c7a9c0", 0.06 * H)
-    c.reflect(hz, "#9fa7cc", strength=0.55, ripple=0.004)
-    sea_t = np.clip((c.Y - hz) / (H - hz), 0, 1)
-    c.blend(np.broadcast_to((c.Y > hz) * (0.25 + 0.4 * sea_t), (H, W)), rgb("#6d86b8"))
-    def glitter(d):
-        for _ in range(int(320 * H / 1920)):
-            y = rng.uniform(hz, H)
-            f = (y - hz) / (H - hz)
-            w = s * (0.01 + 0.08 * f) * rng.uniform(0.3, 1)
-            x = mx + rng.normal(0, s * (0.02 + 0.08 * f))
-            d.rectangle([x - w / 2, y, x + w / 2, y + max(1, s * 0.002 * (1 + 2 * f))], fill=255)
-    c.shape(glitter, "#fff2df", 0.6, blur=0.6)
-    def waves(d):
-        for _ in range(int(120 * H / 1920)):
-            y = rng.uniform(hz, H)
-            f = (y - hz) / (H - hz)
-            x = rng.uniform(0, W)
-            w = s * (0.03 + 0.15 * f)
-            d.arc([x - w, y - s * 0.004 * (1 + 3 * f), x + w, y + s * 0.004 * (1 + 3 * f)], 200, 340, fill=255, width=max(1, int(s * 0.002 * (1 + f))))
-    c.shape(waves, "#e6e4f4", 0.35)
-    # 左侧海崖 + 独自眺望的人
-    cliff_top = 0.66 * H if H > W else 0.6 * H
-    cw = 0.38 * W
-    cr = ridge(W, rng, cliff_top, 0.03 * H, octaves=4)
-    edge = cw + (c.Y[:, 0] - cliff_top) * 0.25
-    mask = (c.Y >= cr[None, :]) & (c.X <= edge[:, None])
-    c.blend(mask.astype(np.float32), rgb("#3c3a62"))
-    def grass(d):
-        for _ in range(int(120 * W / 1080)):
-            x = rng.uniform(0, cw)
-            y = cr[int(x)]
-            h = s * rng.uniform(0.01, 0.03)
-            d.line([(x, y + 2), (x + rng.uniform(-1, 1) * h * 0.5 + h * 0.4, y - h)], fill=255, width=max(1, int(s * 0.002)))
-    c.shape(grass, "#3c3a62", 1.0)
-    px = cw * 0.8
-    py = cr[int(px)]
-    hs = s * 0.05
-    c.shape(lambda d: d.polygon([(px - hs * 0.14, py + 2), (px + hs * 0.14, py + 2), (px + hs * 0.1, py - hs * 0.7), (px - hs * 0.1, py - hs * 0.7)], fill=255), "#2a2848", 1.0)
-    c.shape(lambda d: d.ellipse([px - hs * 0.11, py - hs * 0.95, px + hs * 0.11, py - hs * 0.72], fill=255), "#2a2848", 1.0)
-    c.shape(lambda d: d.polygon([(px + hs * 0.08, py - hs * 0.66), (px + hs * 0.45, py - hs * 0.55), (px + hs * 0.1, py - hs * 0.45)], fill=255), "#2a2848", 0.9)  # 风吹起的围巾
-    c.finish(5, vignette=0.2)
+# ---------------------------------------------------------------- 3 仲夏弯月 · 澄澈夜空 · 湖面倒影
+def scene_summer(rng):
+    c = Canvas()
+    hz = 0.64 * H
+    c.gradient([(0, "#060d22"), (0.25, "#0d1f48"), (0.48, "#1d4377"), (hz / H, "#4f7fa8"), (1, "#4f7fa8")])
+    c.add(radial(0.5 * W, hz, 0.8 * W, 1.6) * 0.25 * (YY < hz), "#9cc2d8")
+    # 银河
+    band = np.exp(-(((YY - (0.55 * H - 0.55 * XX)) / (0.09 * H)) ** 2))
+    mw = fbm(rng, 260, 6) * fbm(rng, 80, 4)
+    c.add(band * np.clip((mw - 0.15) * 2.2, 0, 1) * 0.35 * (YY < hz), "#c7d2f2")
+    # 星星（幂律亮度）
+    stars = np.zeros((H, W), np.float32)
+    n = 2600
+    xs = rng.uniform(0, W, n).astype(int)
+    ys = (rng.uniform(0, 1, n) ** 1.2 * hz * 0.98).astype(int)
+    stars[ys, xs] = rng.pareto(2.2, n).clip(0, 6) * 0.35 + 0.15
+    c.add(blur(stars, 0.7) * 3.2, "#f2f5ff")
+    for _ in range(16):
+        c.add(radial(rng.uniform(0, W), rng.uniform(0.02, 0.5) * H, rng.uniform(3, 6), 1.2) * 0.7, rng.choice(["#ffffff", "#dbe6ff", "#fff1d6"]))
+    # 细弯月（两角朝上，像倒挂天际的笑靥）
+    mx, my, mr = 0.64 * W, 0.2 * H, 0.052 * W
+    c.add(radial(mx, my + mr * 0.5, mr * 7, 1.3) * 0.22, "#a8bfe6")
+    c.add(radial(mx, my + mr * 0.5, mr * 2.2, 1.5) * 0.25, "#f2e8cc")
+
+    def moon(d, ss):
+        d.ellipse(S([(mx - mr, my - mr), (mx + mr, my + mr)], ss), fill=255)
+        d.ellipse(S([(mx - mr * 1.04, my - mr * 1.32), (mx + mr * 1.04, my + mr * 0.74)], ss), fill=0)
+
+    c.over(mask(moon, 0.5), "#fbf3dc")
+    # 远方极低的山线
+    hill = ridge(rng, hz, 0.022 * H, start=4)
+    c.over(np.clip(YY - hill[None, :] + 0.5, 0, 1) * (YY <= hz + 1), "#0a1630")
+    # 湖面：天空镜像 + 横向模糊
+    mirror_water(c, hz, 0.9, 5, 0.8, "#0b1a36", (0.2, 0.45))
+    # 月光倒影：碎银
+    glit = np.zeros((H, W), np.float32)
+    for _ in range(900):
+        y = rng.uniform(hz + 2, H)
+        f = (y - hz) / (H - hz)
+        x = mx + rng.normal(0, 0.012 * W + 0.06 * W * f)
+        w = rng.uniform(4, 22) * (0.4 + 2.2 * f)
+        glit[int(y):int(y + 1 + 2 * f), int(max(0, x - w / 2)):int(min(W, x + w / 2))] += rng.uniform(0.3, 1.0)
+    c.add(blur(glit, 1.0, 0.5) * 0.8 * np.exp(-((YY - hz) / (0.32 * H)) ** 2 * 0.6), "#f7ecd0")
+    c.add(np.exp(-((XX - mx) / (0.05 * W)) ** 2) * np.exp(-((YY - hz - 0.02 * H) / (0.05 * H)) ** 2) * 0.3, "#f7ecd0")
+    # 极细的水面横纹
+    rip = np.clip(blur(fbm(rng, 30, 3), 40, 0.5) - 0.5, 0, 1) * 2 * (YY > hz)
+    c.add(rip * 0.12, "#9ab8d8")
+    # 地平线薄雾
+    c.add(np.exp(-((YY - hz) / (0.012 * H)) ** 2) * 0.25, "#aac6dc")
+    c.finish(13, grain=0.02, vignette=0.2, lift=0.03, sat=0.95)
     return c
 
 
-def scene_winter(W, H, rng):
-    """你听啊冬至的白雪 / 再没有你的冬眠"""
-    c = Canvas(W, H)
-    s = c.s
-    hz = 0.55 * H
-    c.gradient([(0, "#aebfd6"), (0.3, "#d3dde9"), (hz / H, "#f3e9ee"), (1, "#f3e9ee")])
-    c.glow(0.3 * W, 0.2 * H, s * 0.35, "#fff0e6", 0.4)
-    c.mountain(ridge(W, rng, hz - 0.13 * H, 0.18 * H), "#f4f6fa", "#c4cfde", 0.15 * H)
-    r2 = ridge(W, rng, hz - 0.04 * H, 0.08 * H)
-    c.mountain(r2, "#ffffff", "#d2dceb", 0.08 * H)
-    r3 = ridge(W, rng, hz + 0.07 * H, 0.06 * H, start=2)
-    def pines(d, ys, n, sz):
-        out = []
+# ---------------------------------------------------------------- 4 秋末落叶 · 远山与海 · 风吹空旷长堤
+def scene_autumn(rng):
+    c = Canvas()
+    hz = 0.6 * H
+    c.gradient([(0, "#cfcac6"), (0.3, "#e2dbd2"), (0.52, "#efe4d5"), (hz / H, "#f3e7d6"), (1, "#c9c4be")])
+    c.add(radial(0.72 * W, 0.42 * H, 0.45 * W, 1.3) * 0.35, "#ffe2b8")
+    # 层云
+    cl = blur(fbm(rng, 400, 6), 30, 4)
+    c.over(np.clip((cl - 0.5) * 2.5, 0, 1) * 0.35 * (YY < hz), "#f7f1e8")
+    c.mul(np.clip((0.45 - cl) * 2, 0, 1) * 0.25 * (YY < hz), "#b9b2b0")
+    # 远山三层（空气透视）
+    for base, amp, col, haze, st in ((hz - 0.11 * H, 0.14 * H, "#b9b6bd", 0.45, 3),
+                                     (hz - 0.05 * H, 0.1 * H, "#9c9ca8", 0.3, 4),
+                                     (hz - 0.012 * H, 0.05 * H, "#7d808c", 0.15, 5)):
+        r = ridge(rng, base, amp, start=st)
+        m = np.clip(YY - r[None, :] + 0.5, 0, 1) * (YY <= hz + 1)
+        tx = fbm(rng, 60, 4)
+        shade = rgb(col) * (0.92 + 0.16 * tx[..., None])
+        fade = np.clip((YY - r[None, :]) / (0.08 * H), 0, 1)[..., None]
+        shade = shade * (1 - fade * haze) + rgb("#efe4d5") * fade * haze
+        c.a = c.a * (1 - m[..., None]) + shade * m[..., None]
+    # 海面
+    sea_t = np.clip((YY - hz) / (H - hz), 0, 1)
+    mirror_water(c, hz, 1.1, 18, 2, "#a7a9ae", (0.45, 0.45))
+    c.mul(sea_t * 0.35, "#7f8a96")
+    c.add(np.clip(blur(fbm(rng, 40, 3), 60, 0.6) - 0.52, 0, 1) * 3 * (YY > hz) * 0.25, "#f2ece2")
+    c.add(np.exp(-((YY - hz) / (0.006 * H)) ** 2) * 0.3, "#f5ead9")
+    # 长堤：从右下伸向远方的消失点
+    vx, vy = 0.3 * W, hz + 0.004 * H
+    top = [(vx, vy), (vx + 0.012 * W, vy), (1.25 * W, 1.0 * H), (0.58 * W, 1.0 * H)]
+    side = [(vx, vy), (vx, vy + 0.003 * H), (0.5 * W, 1.0 * H), (0.58 * W, 1.0 * H)]
+    c.over(mask(lambda d, ss: d.polygon(S(side, ss), fill=255)), "#6c6966")
+    stone = mask(lambda d, ss: d.polygon(S(top, ss), fill=255))
+    c.over(stone, "#cfc5b8")
+    c.mul(stone * np.clip(fbm(rng, 6, 2) - 0.45, 0, 1) * 0.6, "#a59b8f")
+    c.mul(stone * np.clip((YY - vy) / (H - vy), 0, 1) * 0.25, "#8f877d")
+
+    # 堤上被风吹弯的细树（越远越小）
+    def trees(d, ss):
+        for k in range(9):
+            t = (1 - k / 8.6) ** 2.2
+            px = vx + 0.006 * W + (0.98 * W - vx) * t
+            py = vy + (H * 0.98 - vy) * t
+            h = 0.02 * H + 0.42 * H * t
+            lean = h * 0.18
+            pts = [(px + lean * (j / 10) ** 1.8, py - h * j / 10) for j in range(11)]
+            wd = max(1, int((1 + 9 * t) * ss))
+            d.line(S(pts, ss), fill=255, width=wd)
+            for _ in range(4):
+                bx, by = pts[rng.integers(5, 10)]
+                L = h * rng.uniform(0.12, 0.25)
+                ang = -math.pi / 2 + rng.uniform(0.3, 0.9)
+                d.line(S([(bx, by), (bx + L * math.cos(ang), by + L * math.sin(ang))], ss), fill=255, width=max(1, wd // 2))
+
+    c.over(mask(trees, 0.6) * 0.85, "#3f3a37")
+    # 被风吹起的落叶（运动模糊，暖橙色点缀）
+    for n, sz, bl, al in ((30, 0.006, (3, 1), 0.85), (8, 0.014, (9, 2), 0.8), (3, 0.03, (22, 6), 0.7)):
+        for col in ("#c4703a", "#d89048", "#a8502e"):
+            def lv(d, ss):
+                for _ in range(n // 3 + 1):
+                    x, y = rng.uniform(0, W), rng.uniform(0.25, 0.95) * H
+                    r = sz * W * rng.uniform(0.7, 1.3)
+                    d.polygon(S(ell(x, y, r, r * 0.55, rng.uniform(0, 3.14)), ss), fill=255)
+            c.over(blur(mask(lv, 0), *bl) * al, col)
+    # 风：近乎看不见的横向气流
+    c.add(np.clip(blur(fbm(rng, 50, 3), 120, 3) - 0.5, 0, 1) * 0.15, "#ffffff")
+    c.finish(14, grain=0.024, vignette=0.18, lift=0.04, warm=0.4, sat=0.85)
+    return c
+
+
+# ---------------------------------------------------------------- 5 冬至白雪 · 安静街灯 · 留白的夜
+def scene_winter(rng):
+    c = Canvas()
+    gz = 0.74 * H
+    c.gradient([(0, "#1d2944"), (0.35, "#34466a"), (0.62, "#6a7d9e"), (gz / H, "#9eabc2"), (gz / H + 0.001, "#b8c4d8"), (1, "#dfe6f1")])
+    # 远处被雪雾吞没的楼
+    far = np.zeros((H, W), np.float32)
+    for _ in range(14):
+        x0 = rng.uniform(-0.05, 1.0) * W
+        w = rng.uniform(0.06, 0.18) * W
+        top = gz - rng.uniform(0.04, 0.16) * H
+        far[int(top):int(gz), int(max(0, x0)):int(min(W, x0 + w))] = 1
+    c.over(blur(far, 14) * 0.35, "#4a5a7a")
+    c.bokeh([(rng.uniform(0, W), rng.uniform(gz - 0.12 * H, gz - 0.01 * H), rng.uniform(4, 12), "#ffc98c", rng.uniform(0.2, 0.5)) for _ in range(16)], soft=3)
+    c.add(np.exp(-((YY - gz) / (0.03 * H)) ** 2) * 0.25, "#c6d0e2")
+    # 雪地起伏
+    c.mul(np.clip(fbm(rng, 200, 4) - 0.5, 0, 1) * (YY > gz) * 0.5, "#a3b1ca")
+    # 街灯
+    lx, ly = 0.27 * W, 0.44 * H
+    post = mask(lambda d, ss: (d.rectangle(S([(lx - 4, ly), (lx + 4, gz + 0.04 * H)], ss), fill=255),
+                               d.polygon(S([(lx - 22, ly + 4), (lx + 22, ly + 4), (lx + 14, ly - 24), (lx - 14, ly - 24)], ss), fill=255),
+                               d.rectangle(S([(lx - 6, ly - 34), (lx + 6, ly - 24)], ss), fill=255)), 0.6)
+    c.over(post, "#151b2a")
+    # 灯光锥
+    cone = mask(lambda d, ss: d.polygon(S([(lx - 18, ly + 4), (lx + 18, ly + 4), (lx + 0.3 * W, gz + 0.05 * H), (lx - 0.3 * W, gz + 0.05 * H)], ss), fill=255), 0)
+    cone = blur(cone, 28) * np.clip(1 - (YY - ly) / (0.5 * H), 0, 1)
+    c.add(cone * 0.22, "#ffd6a0")
+    c.add(radial(lx, ly, 0.38 * W, 1.2) * 0.28, "#ffb978")
+    c.add(radial(lx, ly + 6, 0.05 * W, 1.6) * 1.0, "#fff1d2")
+    pool = np.exp(-(((XX - lx) / (0.32 * W)) ** 2 + ((YY - gz - 0.05 * H) / (0.05 * H)) ** 2))
+    c.add(pool * 0.35, "#ffd7a8")
+    # 灯下一条覆雪的长椅
+    bx, by = 0.52 * W, gz + 0.03 * H
+    bench = mask(lambda d, ss: (d.rectangle(S([(bx, by - 26), (bx + 170, by - 18)], ss), fill=255),
+                                d.rectangle(S([(bx, by - 52), (bx + 170, by - 44)], ss), fill=255),
+                                d.rectangle(S([(bx + 12, by - 52), (bx + 18, by)], ss), fill=255),
+                                d.rectangle(S([(bx + 152, by - 52), (bx + 158, by)], ss), fill=255)), 0.6)
+    c.over(bench * 0.9, "#22283a")
+    snowcap = mask(lambda d, ss: (d.rounded_rectangle(S([(bx - 2, by - 31), (bx + 172, by - 25)], ss), radius=3 * ss, fill=255),
+                                  d.rounded_rectangle(S([(bx - 2, by - 57), (bx + 172, by - 51)], ss), radius=3 * ss, fill=255)), 0.6)
+    c.over(snowcap, "#e9eef7")
+    c.over(blur(np.roll(bench, 18, axis=0) * (YY > by - 2), 8, 3) * 0.25, "#7f8db0")
+
+    # 一串走远的脚印
+    def steps(d, ss):
+        for k in range(26):
+            y = H - (1 - (1 - k / 26) ** 1.6) * (H - gz) - 10
+            f = (y - gz) / (H - gz)
+            x = 0.62 * W - (1 - f) * 0.25 * W + (k % 2) * 16 * f
+            rx, ry = 2 + 6 * f, 1 + 3 * f
+            d.ellipse(S([(x - rx, y - ry), (x + rx, y + ry)], ss), fill=255)
+
+    c.mul(mask(steps, 1.0) * 0.35, "#7d8aa6")
+    # 雪：三层景深，灯光锥中更亮
+    lit = 0.35 + 1.4 * np.clip(cone * 4 + radial(lx, ly, 0.3 * W) * 0.8, 0, 1)
+    for n, rmin, rmax, bl, al in ((2200, 0.8, 1.8, 0.4, 0.7), (500, 2, 3.5, 1.2, 0.75), (60, 6, 14, 5, 0.5)):
+        layer = Image.new("L", (W, H), 0)
+        d = ImageDraw.Draw(layer)
         for _ in range(n):
-            x = rng.uniform(0, W)
-            y = ys[int(x)] + rng.uniform(0, 0.02) * H
-            hh = sz * rng.uniform(0.7, 1.3)
-            out.append((x, y, hh))
-        return out
-    def draw_pines(tr, col, snow):
-        c.shape(lambda d: [d.polygon([(x, y - h), (x - h * 0.28, y), (x + h * 0.28, y)], fill=255) for x, y, h in tr], col, 1.0)
-        c.shape(lambda d: [[d.polygon([(x, y - h + h * k * 0.3), (x - h * (0.1 + 0.07 * k), y - h * (0.78 - 0.3 * k)), (x + h * (0.1 + 0.07 * k), y - h * (0.78 - 0.3 * k))], fill=255) for k in range(3)] for x, y, h in tr], snow, 0.9)
-    draw_pines(pines(None, r2, int(60 * W / 1080), s * 0.05), "#8aa0b6", "#f2f5fa")
-    c.mountain(r3, "#ffffff", "#e3e9f3", 0.3 * H)
-    # 小木屋（暖光窗 = 冬眠）
-    hx = 0.36 * W
-    hy = r3[int(hx)] + 0.01 * H
-    hw, hh = s * 0.16, s * 0.1
-    c.shape(lambda d: d.rectangle([hx - hw / 2, hy - hh, hx + hw / 2, hy], fill=255), "#8b6a5b", 1.0)
-    c.shape(lambda d: d.polygon([(hx - hw * 0.65, hy - hh), (hx, hy - hh - hw * 0.45), (hx + hw * 0.65, hy - hh)], fill=255), "#ffffff", 1.0)
-    c.shape(lambda d: d.polygon([(hx - hw * 0.65, hy - hh), (hx, hy - hh - hw * 0.45), (hx, hy - hh - hw * 0.38), (hx - hw * 0.58, hy - hh + s * 0.008)], fill=255), "#d7e0ee", 0.8)
-    c.shape(lambda d: d.rectangle([hx + hw * 0.22, hy - hh - hw * 0.4, hx + hw * 0.32, hy - hh - hw * 0.15], fill=255), "#6e5248", 1.0)
-    for k in range(5):
-        c.glow(hx + hw * 0.27 + k * s * 0.015, hy - hh - hw * 0.45 - k * s * 0.03, s * (0.012 + 0.006 * k), "#ffffff", 0.35)
-    wxl = hx - hw * 0.25
-    c.shape(lambda d: d.rectangle([wxl - s * 0.02, hy - hh * 0.7, wxl + s * 0.02, hy - hh * 0.3], fill=255), "#ffd27d", 1.0)
-    c.shape(lambda d: d.line([(wxl, hy - hh * 0.7), (wxl, hy - hh * 0.3)], fill=255, width=max(2, int(s * 0.003))), "#8b6a5b", 1.0)
-    c.glow(wxl, hy - hh * 0.5, s * 0.06, "#ffb35c", 0.5)
-    c.shape(lambda d: d.rectangle([hx + hw * 0.08, hy - hh * 0.65, hx + hw * 0.3, hy], fill=255), "#5d443b", 1.0)
-    c.shape(lambda d: d.ellipse([hx - hw * 0.8, hy - s * 0.015, hx + hw * 0.8, hy + s * 0.02], fill=255), "#ffffff", 1.0, blur=s * 0.004)
-    # 前景松树
-    fg = []
-    for x in (0.06, 0.16, 0.86, 0.95):
-        fg.append((x * W, r3[int(x * W)] + 0.12 * H + rng.uniform(0, 0.05) * H, s * rng.uniform(0.32, 0.45)))
-    draw_pines(fg, "#4f6e6a", "#f6f8fc")
-    # 雪地脚印/阴影
-    def shadow(d):
-        for k in range(10):
-            y = hy + (H - hy) * (k + 1) / 11
-            d.ellipse([hx - s * 0.006 + k * s * 0.02 * ((-1) ** k * 0.3 + 1), y, hx + s * 0.006 + k * s * 0.02 * ((-1) ** k * 0.3 + 1), y + s * 0.01], fill=255)
-    c.shape(shadow, "#b7c3d8", 0.6)
-    # 飘雪（三层景深）
-    for n, rmin, rmax, bl, al in ((900, 0.0012, 0.0025, 0, 0.85), (220, 0.003, 0.006, 1.2, 0.9), (40, 0.008, 0.016, s * 0.004, 0.75)):
-        def snow(d):
-            for _ in range(int(n * W * H / (1080 * 1920))):
-                x, y = rng.uniform(0, W), rng.uniform(0, H)
-                rr = s * rng.uniform(rmin, rmax)
-                d.ellipse([x - rr, y - rr, x + rr, y + rr], fill=255)
-        c.shape(snow, "#ffffff", al, blur=bl)
-    c.finish(6, vignette=0.12)
+            x, y = rng.uniform(0, W), rng.uniform(0, gz + 0.1 * H)
+            r = rng.uniform(rmin, rmax)
+            d.ellipse([x - r, y - r, x + r, y + r], fill=int(rng.uniform(150, 255)))
+        sn = blur(np.asarray(layer, np.float32) / 255, bl)
+        c.add(sn * al * lit, "#ffffff")
+        c.add(sn * al * cone * 2.5, "#ffd8a8")
+    c.finish(15, grain=0.024, vignette=0.22, lift=0.035, sat=0.9)
     return c
 
 
 SCENES = [
-    ("01_巷口窗前", scene_window),
+    ("01_巷口暖灯", scene_window),
     ("02_春日蝴蝶", scene_spring),
     ("03_仲夏弯月", scene_summer),
-    ("04_秋末落叶", scene_autumn),
+    ("04_秋末长堤", scene_autumn),
     ("05_冬至白雪", scene_winter),
 ]
 
 
 def main():
-    sizes = {"vertical_1080x1920": (1080, 1920)}
     only = sys.argv[1:]
-    for folder, (W, H) in sizes.items():
-        os.makedirs(os.path.join(OUT, folder), exist_ok=True)
-        for i, (name, fn) in enumerate(SCENES):
-            if only and not any(o in name for o in only):
-                continue
-            img = fn(W, H, np.random.default_rng(100 + i)).to_image()
-            path = os.path.join(OUT, folder, name + ".jpg")
-            img.save(path, quality=93)
-            print(path)
+    folder = os.path.join(OUT, "vertical_1080x1920")
+    os.makedirs(folder, exist_ok=True)
+    for i, (name, fn) in enumerate(SCENES):
+        if only and not any(o in name for o in only):
+            continue
+        path = os.path.join(folder, name + ".jpg")
+        fn(np.random.default_rng(200 + i)).save(path)
+        print(path)
 
 
 if __name__ == "__main__":
