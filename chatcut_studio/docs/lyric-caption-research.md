@@ -99,5 +99,5 @@ StyleProfile
 |---|---|---|---|
 | 10 | Apple Music 逐词发光 | 当前词逐渐亮起并发光，其他行虚化 | ASS（`\kf` + 发光层）近似实现；网页引擎可完整实现（自己实现，不用 AGPL 代码） |
 | 11 | 乱码解密 | 字符先乱跳再定格成歌词 | GSAP ScrambleText；ASS 可逐帧近似 |
-| 12 | 闪光扫过 | 一道高光从左扫到右 | lyric-mv 的 `sword` 强调；或 ASS `\clip` + `\t` |
+| 12 | 闪光扫过 | 一道高光从左扫到右 | **已接入**：`lyrics.py`，ASS `\clip` + `\t` 多层光带（见 `samples/shine_sweep.jpg`） |
 | 13 | 迷幻音频背景 | MilkDrop 预设随音乐变化，叠加歌词 | Butterchurn 渲染背景 + 任一字幕引擎 |

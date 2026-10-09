@@ -3,19 +3,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import chatcut_mcp, envcheck, optimize, settings, styles
+from . import chatcut_mcp, envcheck, lyrics, optimize, settings, styles
 from .agent import RunManager, build_prompt, classify
 from .presets import MAX_STYLES
 from .profile import StyleProfile, render_skill_md
 from .providers import ProviderError, list_models
 
 STATIC = Path(__file__).parent / "static"
+BG_DIR = Path(__file__).resolve().parent.parent / "mv_backgrounds" / "vertical_1080x1920"
+IMG_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 
 
 class UpdateStyleReq(BaseModel):
@@ -36,6 +39,40 @@ class RunReq(BaseModel):
     task: str
     assets: str = ""
     style: str | None = None
+
+
+class LyricPreviewReq(BaseModel):
+    profile: StyleProfile
+    text: str
+    background: str = ""
+
+
+class LyricRenderReq(BaseModel):
+    style: str
+    lrc: str
+    backgrounds: list[str] = []
+    audio: str = ""
+    overlay: bool = False
+
+
+def _backgrounds() -> list[str]:
+    return sorted(p.name for p in BG_DIR.glob("*") if p.suffix.lower() in IMG_EXT) if BG_DIR.is_dir() else []
+
+
+def _bg_path(name: str) -> Path:
+    if name not in _backgrounds():
+        raise HTTPException(400, f"没有这张背景图：{name}")
+    return BG_DIR / name
+
+
+def _render_dir() -> Path:
+    d = settings.DATA_ROOT / "renders" / uuid.uuid4().hex[:10]
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _url(p: Path) -> str:
+    return f"/renders/{p.parent.name}/{p.name}"
 
 
 class ApproveReq(BaseModel):
@@ -196,6 +233,62 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.post("/api/preview")
     def preview(req: UpdateStyleReq):
         return {"skill_md": render_skill_md(req.profile)}
+
+    # ---------- 歌词字幕（本地渲染，含闪光扫过） ----------
+    @app.get("/api/lyrics/backgrounds")
+    def lyric_backgrounds():
+        return {"backgrounds": _backgrounds()}
+
+    @app.get("/api/lyrics/backgrounds/{name}")
+    def lyric_background_file(name: str):
+        return FileResponse(_bg_path(name))
+
+    @app.post("/api/lyrics/preview")
+    async def lyric_preview(req: LyricPreviewReq):
+        """用当前（可以是未保存的）字幕参数，渲染几句样张：半分辨率小视频 + 扫光前/中/后三帧。"""
+        lines = lyrics.sample_lines(req.text)
+        if not lines:
+            raise HTTPException(400, "请输入至少一句歌词")
+        c = req.profile.captions
+        bgs = [_bg_path(req.background)] if req.background else []
+        d = _render_dir()
+        try:
+            video = await asyncio.to_thread(lyrics.render, lines, c, d / "preview", bgs, None, 0.5)
+            target = next((ln for ln in lines if c.shine != "无" and lyrics.shine_applies(ln, c)), lines[0])
+            shots = await asyncio.to_thread(lyrics.frames, video, lyrics.sweep_times(target, c), d)
+        except lyrics.RenderError as e:
+            raise HTTPException(500, str(e))
+        return {"video": _url(video), "frames": [_url(p) for p in shots],
+                "shine_line": target.text if c.shine != "无" and lyrics.shine_applies(target, c) else ""}
+
+    @app.post("/api/lyrics/render")
+    async def lyric_render(req: LyricRenderReq):
+        """按风格渲染整首歌：整支视频（背景图 + 字幕 + 音频），或透明字幕层（.mov，导入 ChatCut 叠加）。"""
+        profile = StyleProfile.model_validate(_style_or_404(styles.get, req.style)["profile"])
+        lines = lyrics.parse_lrc(req.lrc)
+        if not lines:
+            raise HTTPException(400, "没有解析到带时间标签的歌词，格式如 [00:12.50]歌词")
+        audio = None
+        if req.audio.strip():
+            audio = Path(req.audio.strip()).expanduser()
+            if not audio.is_file():
+                raise HTTPException(400, f"找不到音频文件：{audio}")
+        bgs = [] if req.overlay else [_bg_path(n) for n in req.backgrounds]
+        d = _render_dir()
+        try:
+            out = await asyncio.to_thread(lyrics.render, lines, profile.captions, d / "lyrics", bgs, audio,
+                                          1.0, 30, req.overlay)
+        except lyrics.RenderError as e:
+            raise HTTPException(500, str(e))
+        return {"url": _url(out), "path": str(out), "lines": len(lines), "duration": round(lines[-1].end, 1)}
+
+    @app.get("/renders/{rid}/{name}")
+    def render_file(rid: str, name: str):
+        root = (settings.DATA_ROOT / "renders").resolve()
+        f = (root / rid / name).resolve()
+        if root not in f.parents or not f.is_file():
+            raise HTTPException(404, "没有这个文件")
+        return FileResponse(f)
 
     # ---------- ③ 一键剪辑 ----------
     def _prompt(req: RunReq) -> str:

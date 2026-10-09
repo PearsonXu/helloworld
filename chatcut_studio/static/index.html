@@ -35,6 +35,7 @@
   input[type=checkbox], input[type=radio] { width: auto; margin-right: 6px; }
   textarea { min-height: 80px; resize: vertical; }
   pre, code, .mono { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+  code { word-break: break-all; } video, img { max-width: 100%; }
   pre { background: var(--code); padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
   button.btn { padding: 7px 13px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; cursor: pointer; white-space: nowrap; }
   button.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
@@ -180,6 +181,18 @@
         <span id="edMsg" class="muted"></span>
       </div>
 
+      <div class="proposal" style="border-color:var(--line);margin-top:16px">
+        <strong>字幕样张</strong>
+        <p class="muted" style="margin:2px 0 8px">用表单里当前的字幕参数（不用先保存）在背景图上渲染几句。<code>{词}</code> 标记关键词，行末 <code>#chorus</code> 表示副歌。</p>
+        <div class="grid">
+          <label>背景图<select id="pvBg"></select></label>
+          <label style="grid-column:span 2">歌词（每行一句）<textarea id="pvText" style="min-height:70px">巷口{灯光}忽明忽灭
+你看啊仲夏的{弯月} #chorus</textarea></label>
+        </div>
+        <div class="row" style="margin-top:8px"><button class="btn primary" onclick="lyricPreview()">生成样张</button><span id="pvMsg" class="muted"></span></div>
+        <div id="pvOut"></div>
+      </div>
+
       <h3>版本历史</h3>
       <div id="history" class="muted"></div>
       <details><summary>查看生成的 SKILL.md</summary><pre id="skillMd"></pre></details>
@@ -201,6 +214,20 @@
         <button class="btn" onclick="copyPrompt()">只复制提示词</button>
       </div>
       <div class="note">会花积分、上传、删除或导出的操作，都会先在右侧弹出确认。「只复制提示词」可以粘到 ChatCut Desktop 的 AI 面板里用。</div>
+    </div>
+    <div class="card">
+      <h2>本地渲染歌词视频</h2>
+      <p class="sub">不经过 ChatCut，按上面选的风格（含闪光扫过）在本机渲染。透明字幕层可以导入 ChatCut 叠在画面上。</p>
+      <label>LRC 歌词（<code>{词}</code> 标关键词，行末 <code>#chorus</code> 标副歌）<textarea id="lrc" style="min-height:140px" placeholder="[00:12.50]巷口{灯光}忽明忽灭&#10;[00:16.80]手中甜咖啡已冷却&#10;[01:02.00]你看啊春日的{蝴蝶} #chorus"></textarea></label>
+      <label style="margin-top:8px">音频文件路径（可选）<input id="audioPath" placeholder="/Users/me/Music/song.mp3"></label>
+      <div class="muted" style="margin-top:8px">背景图（按顺序轮换，换图点落在句与句之间）</div>
+      <div id="bgPick" class="row" style="margin-top:4px"></div>
+      <div class="row" style="margin-top:10px">
+        <label style="display:flex;align-items:center;color:var(--ink)"><input type="radio" name="rmode" value="video" checked>整支视频（mp4）</label>
+        <label style="display:flex;align-items:center;color:var(--ink)"><input type="radio" name="rmode" value="overlay">透明字幕层（mov）</label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn primary" id="renderBtn" onclick="lyricRender()">开始渲染</button><span id="renderMsg" class="muted"></span></div>
+      <div id="renderOut"></div>
     </div>
     <div class="card">
       <h2>执行过程</h2>
@@ -355,7 +382,9 @@ const FORM = [
   ["字幕", [["captions.enabled", "添加字幕", "bool"], ["captions.font", "字体", "text"],
     ["captions.size", "字号", ["小", "中", "大", "特大"]], ["captions.color", "颜色", "text"], ["captions.stroke", "描边 / 阴影", "text"],
     ["captions.position", "位置", ["底部", "居中", "顶部", "左侧竖排", "右侧竖排", "随画面变化"]],
-    ["captions.animation", "出入场动画", "text"], ["captions.keyword_highlight", "关键词突出", "bool"], ["captions.max_chars_per_line", "每行最多字数", "number"]]],
+    ["captions.animation", "出入场动画", "text"], ["captions.keyword_highlight", "关键词突出", "bool"], ["captions.max_chars_per_line", "每行最多字数", "number"],
+    ["captions.shine", "闪光扫过", ["无", "关键词", "整句", "仅副歌"]], ["captions.shine_color", "闪光颜色", "color"],
+    ["captions.shine_seconds", "闪光时长（秒）", "number"]]],
   ["画面", [["transitions.style", "转场风格", "text"], ["transitions.duration_seconds", "转场时长（秒）", "number"],
     ["color_grade.look", "调色风格", "text"], ["color_grade.notes", "调色补充", "text"],
     ["motion.ken_burns", "静态图缓慢推拉", "bool"], ["motion.intensity", "运动强度", ["无", "轻微", "适中", "强烈"]]]],
@@ -373,6 +402,7 @@ function renderForm() {
       if (Array.isArray(t)) return `<label>${label}<select name="${k}">${t.map((o) => `<option>${o}</option>`).join("")}</select></label>`;
       if (t === "lines") return `<label style="grid-column:1/-1">${label}<textarea name="${k}"></textarea></label>`;
       if (t === "wide") return `<label style="grid-column:1/-1">${label}<input name="${k}"></label>`;
+      if (t === "color") return `<label>${label}<input name="${k}" type="color" style="height:38px;padding:2px"></label>`;
       return `<label>${label}<input name="${k}" type="${t === "number" ? "number" : "text"}" step="any"></label>`;
     }).join("") + `</div></fieldset>`).join("");
 }
@@ -493,9 +523,45 @@ async function feedbackFromRun() {
   propose();
 }
 
+// ================= 歌词字幕 =================
+let BGS = [];
+async function loadBackgrounds() {
+  BGS = (await api("/api/lyrics/backgrounds")).backgrounds;
+  $("#pvBg").innerHTML = '<option value="">（纯色背景）</option>' + BGS.map((b) => `<option>${esc(b)}</option>`).join("");
+  if (BGS.length) $("#pvBg").value = BGS[0];
+  $("#bgPick").innerHTML = BGS.map((b, i) => `<label style="width:auto;text-align:center;color:var(--ink)">
+      <img src="/api/lyrics/backgrounds/${encodeURIComponent(b)}" style="width:64px;height:114px;object-fit:cover;border-radius:4px;display:block">
+      <input type="checkbox" data-bg="${esc(b)}" ${i < 5 ? "checked" : ""}>${esc(b.replace(/\.\w+$/, "").replace(/^\d+_/, ""))}</label>`).join("") || '<span class="muted">没有找到背景图（mv_backgrounds/vertical_1080x1920）</span>';
+}
+async function lyricPreview() {
+  $("#pvMsg").textContent = "渲染中…（几秒）"; $("#pvOut").innerHTML = "";
+  try {
+    const r = await post("/api/lyrics/preview", {profile: readForm(), text: $("#pvText").value, background: $("#pvBg").value});
+    $("#pvMsg").textContent = r.shine_line ? `闪光扫过「${r.shine_line}」：扫光前 / 扫到一半 / 扫完` : "当前参数下没有句子需要闪光扫过（检查「闪光扫过」设置和 {关键词} / #chorus 标记）";
+    $("#pvOut").innerHTML = `<div class="row" style="margin-top:8px;align-items:flex-start">
+      <video src="${r.video}" controls autoplay loop muted playsinline style="width:180px;border-radius:6px"></video>
+      ${r.frames.map((f) => `<img src="${f}" style="width:180px;border-radius:6px">`).join("")}</div>`;
+  } catch (e) { $("#pvMsg").textContent = e.message; }
+}
+async function lyricRender() {
+  const style = $("#runStyle").value;
+  if (!style) { $("#renderMsg").textContent = "请先在上面选择一个风格"; return; }
+  const overlay = document.querySelector("input[name=rmode]:checked").value === "overlay";
+  const backgrounds = [...document.querySelectorAll("[data-bg]:checked")].map((x) => x.dataset.bg);
+  $("#renderBtn").disabled = true; $("#renderMsg").textContent = "渲染中…整首歌大约需要一两分钟"; $("#renderOut").innerHTML = "";
+  try {
+    const r = await post("/api/lyrics/render", {style, lrc: $("#lrc").value, backgrounds, audio: $("#audioPath").value, overlay});
+    $("#renderMsg").textContent = `完成：${r.lines} 句，${r.duration} 秒`;
+    $("#renderOut").innerHTML = `<div class="note">文件：<code>${esc(r.path)}</code>　<a href="${r.url}" download>下载</a></div>` +
+      (overlay ? "" : `<video src="${r.url}" controls style="width:220px;margin-top:8px;border-radius:6px"></video>`);
+  } catch (e) { $("#renderMsg").textContent = e.message; }
+  $("#renderBtn").disabled = false;
+}
+
 // ================= 启动 =================
 renderForm();
 loadSettings();
+loadBackgrounds();
 </script>
 </body>
 </html>

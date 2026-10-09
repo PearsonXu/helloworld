@@ -29,6 +29,9 @@ class Captions(BaseModel):
     animation: str = Field("淡入淡出", description="出入场动画")
     keyword_highlight: bool = Field(False, description="关键词放大 / 换色")
     max_chars_per_line: int = Field(14, description="每行最多字数")
+    shine: Literal["无", "关键词", "整句", "仅副歌"] = Field("无", description="闪光扫过：一道高光从左到右扫过文字")
+    shine_color: str = Field("#FFE9B0", description="闪光颜色")
+    shine_seconds: float = Field(0.8, description="闪光扫过一次的时长（秒）")
 
 
 class Transitions(BaseModel):
@@ -87,6 +90,9 @@ def slugify(name: str) -> str:
     return slug[:60]
 
 
+SHINE_SCOPE = {"关键词": "每句的关键词", "整句": "整句歌词", "仅副歌": "副歌歌词"}
+
+
 def _yn(v: bool) -> str:
     return "是" if v else "否"
 
@@ -131,6 +137,8 @@ def render_skill_md(p: StyleProfile, slug: str | None = None) -> str:
             f"| 字幕动画 | {c.animation} |",
             f"| 关键词突出 | {_yn(c.keyword_highlight)} |",
         ]
+        if c.shine != "无":
+            lines.append(f"| 闪光扫过 | {SHINE_SCOPE[c.shine]}，{c.shine_color}，每次约 {c.shine_seconds:g} 秒 |")
     else:
         lines.append("| 字幕 | 不加字幕 |")
     lines += [
@@ -164,6 +172,12 @@ def render_skill_md(p: StyleProfile, slug: str | None = None) -> str:
             f"{c.animation}" + ("，关键词放大或换色突出" if c.keyword_highlight else "") + "。断行按语义，不拆词。"
         )
         step += 1
+        if c.shine != "无":
+            lines.append(
+                f"{step}. 闪光扫过：字幕出现后，用一道 {c.shine_color} 的柔和高光从左到右扫过{SHINE_SCOPE[c.shine]}，"
+                f"约 {c.shine_seconds:g} 秒，只扫一次；高光带边缘柔化，不要闪白整屏。"
+            )
+            step += 1
     lines += [
         f"{step}. 转场：{p.transitions.style}。",
         f"{step + 1}. 调色：{p.color_grade.look}。",
