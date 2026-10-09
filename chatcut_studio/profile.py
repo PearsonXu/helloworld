@@ -97,9 +97,9 @@ SAFETY_RULES = """\
 - 不确定的风格细节，以本 Skill 的参数为准；本 Skill 没写到的，保持 ChatCut 默认，不要自行发挥。"""
 
 
-def render_skill_md(p: StyleProfile) -> str:
-    """不依赖模型的确定性模板：离线也能生成一份可用的 SKILL.md。"""
-    slug = slugify(p.name)
+def render_skill_md(p: StyleProfile, slug: str | None = None) -> str:
+    """确定性模板：同一份风格档案永远生成同样的 SKILL.md，方便比对版本差异。"""
+    slug = slug or slugify(p.name)
     desc = p.description.replace("\n", " ").strip()
     c = p.captions
     lines = [

@@ -1,8 +1,9 @@
-"""用 Claude Agent SDK 驱动 ChatCut MCP 执行剪辑，花积分 / 删除 / 上传 / 导出前在界面上弹确认。
+"""剪辑 Agent：驱动 ChatCut MCP 执行剪辑，花积分 / 删除 / 上传 / 导出前在界面上弹确认。
 
-两种连接方式（环境变量 CHATCUT_MCP_MODE）：
-- plugin（默认）：复用本机 Claude Code 里已安装、已登录的 ChatCut 插件（setting_sources=["user"]）。
-- http：直接连 ChatCut 托管 MCP，需要自己提供 CHATCUT_MCP_TOKEN（OAuth access token，能否这样用待验证）。
+三种执行器（设置页里选）：
+- claude_code：Claude Agent SDK，复用本机 Claude Code 里已安装、已登录的 ChatCut 插件。
+- api：任意 API 模型（Claude API、DeepSeek、通义千问、Kimi、GLM……）+ 本程序直连 ChatCut MCP。
+- demo：演示模式，不连 ChatCut、不花钱（CHATCUT_STUDIO_DEMO=1）。
 """
 from __future__ import annotations
 
@@ -13,8 +14,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-CHATCUT_MCP_URL = "https://api.chatcut.io/api/external-mcp/mcp"
 MODEL = os.environ.get("CHATCUT_STUDIO_MODEL", "claude-opus-5-5")
+MAX_TURNS = int(os.environ.get("CHATCUT_STUDIO_MAX_TURNS", "60"))
 
 # 工具名里出现这些词，视为会花积分、不可逆或会把素材传到云端，需要用户确认
 COSTLY = re.compile(r"generat|gen_|video_gen|music|voice|tts|transcri|translat|render|export|upload|import|delete|remove|purchase|credit|publish", re.I)
@@ -47,13 +48,11 @@ def build_prompt(task: str, assets: str, skill_md: str) -> str:
     return "\n\n".join(parts)
 
 
-def mcp_options() -> dict[str, Any]:
-    if os.environ.get("CHATCUT_MCP_MODE", "plugin") == "http":
-        headers = {}
-        if tok := os.environ.get("CHATCUT_MCP_TOKEN"):
-            headers["Authorization"] = f"Bearer {tok}"
-        return {"mcp_servers": {"chatcut": {"type": "http", "url": CHATCUT_MCP_URL, "headers": headers}}}
-    return {"setting_sources": ["user"]}
+SYSTEM_PROMPT = """你是 ChatCut 视频剪辑助手，只能通过提供的 ChatCut 工具操作用户的剪辑项目。
+- 先读取项目和时间线，弄清现状再动手；每完成一个大步骤，用读取/校验类工具确认改动生效。
+- 严格遵守用户给出的风格 Skill；Skill 没写到的保持 ChatCut 默认。
+- 会花积分、上传素材、删除内容或导出的操作，系统会先征求用户同意；被拒绝时换一种做法或停下来说明。
+- 用中文简短汇报进度，最后列出改动摘要和需要用户确认的事项。"""
 
 
 @dataclass
@@ -132,8 +131,8 @@ async def sdk_runner(run: Run) -> None:
         permission_mode="default",
         can_use_tool=can_use_tool,
         disallowed_tools=["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch"],
-        max_turns=int(os.environ.get("CHATCUT_STUDIO_MAX_TURNS", "60")),
-        **mcp_options(),
+        max_turns=MAX_TURNS,
+        setting_sources=["user"],
     )
     async with ClaudeSDKClient(options=options) as client:
         await client.query(run.prompt)
@@ -147,6 +146,45 @@ async def sdk_runner(run: Run) -> None:
             elif isinstance(msg, ResultMessage):
                 await run.emit({"type": "result", "is_error": msg.is_error, "cost_usd": msg.total_cost_usd,
                                 "turns": msg.num_turns, "text": msg.result or ""})
+
+
+async def api_runner(run: Run) -> None:
+    """API 模型 + 直连 ChatCut MCP 的工具调用循环。"""
+    from . import chatcut_mcp, settings
+    from .providers import make_adapter
+
+    s = settings.load()
+    p = s.provider(s.agent_provider)
+    adapter = make_adapter(p)
+    await run.emit({"type": "text", "text": f"使用 {p.label}（{p.model}），正在连接 ChatCut…"})
+    async with chatcut_mcp.connect(s.mcp) as client:
+        tools = await chatcut_mcp.list_tools(client)
+        await run.emit({"type": "text", "text": f"已连接，ChatCut 提供 {len(tools)} 个工具。"})
+        messages = adapter.start(SYSTEM_PROMPT, run.prompt)
+        for turn in range(1, MAX_TURNS + 1):
+            step = await adapter.step(messages, tools)
+            if step.text.strip():
+                await run.emit({"type": "text", "text": step.text})
+            if not step.calls:
+                await run.emit({"type": "result", "is_error": False, "cost_usd": None, "turns": turn, "text": step.text})
+                return
+            results = []
+            for call in step.calls:
+                await run.emit({"type": "tool", "tool": call.name, "input": call.args})
+                if call.bad_args:
+                    results.append((call, f"参数不是合法 JSON：{call.bad_args[:200]}", True))
+                    continue
+                decision = classify(f"mcp__chatcut__{call.name}")
+                if decision == "ask":
+                    decision = "allow" if await run.ask(call.name, call.args) else "deny"
+                await run.emit({"type": "decision", "tool": call.name, "decision": decision})
+                if decision != "allow":
+                    results.append((call, "用户拒绝了这个操作。请换一种不需要它的做法，或停下来向用户说明。", True))
+                    continue
+                results.append((call, *await chatcut_mcp.call_tool(client, call.name, call.args)))
+            adapter.add_results(messages, results)
+        await run.emit({"type": "result", "is_error": True, "cost_usd": None, "turns": MAX_TURNS,
+                        "text": f"达到最大轮数 {MAX_TURNS}，已停止"})
 
 
 async def demo_runner(run: Run) -> None:
@@ -173,20 +211,27 @@ async def demo_runner(run: Run) -> None:
     await run.emit({"type": "result", "is_error": False, "cost_usd": 0.0, "turns": len(steps), "text": "演示完成"})
 
 
+def pick_runner() -> Runner:
+    if os.environ.get("CHATCUT_STUDIO_DEMO") == "1":
+        return demo_runner
+    from . import settings
+
+    return api_runner if settings.load().agent_mode == "api" else sdk_runner
+
+
 class RunManager:
     def __init__(self, runner: Runner | None = None):
-        if runner is None:
-            runner = demo_runner if os.environ.get("CHATCUT_STUDIO_DEMO") == "1" else sdk_runner
-        self.runner = runner
+        self.runner = runner  # None = 每次运行时按当前设置选择
         self.runs: dict[str, Run] = {}
 
     def start(self, prompt: str) -> Run:
+        runner = self.runner or pick_runner()
         run = Run(id=uuid.uuid4().hex[:12], prompt=prompt)
         self.runs[run.id] = run
 
         async def _go():
             try:
-                await self.runner(run)
+                await runner(run)
             except Exception as e:  # 把错误送回界面，而不是让后台任务静默失败
                 await run.emit({"type": "error", "message": f"{type(e).__name__}: {e}"})
             finally:

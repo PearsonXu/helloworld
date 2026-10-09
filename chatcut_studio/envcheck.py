@@ -1,4 +1,4 @@
-"""环境体检与一键安装：把 ChatCut 官方安装文档里的命令包装成白名单动作。
+"""Claude Code 方式的环境体检与一键安装：把 ChatCut 官方安装文档里的命令包装成白名单动作。
 
 参考：https://github.com/ChatCut-Inc/agent-plugin/blob/main/docs/claude-code-install.md
 """
@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-
-from . import llm
 
 MARKETPLACE_URL = "https://github.com/ChatCut-Inc/agent-plugin.git"
 PLUGIN = "chatcut@chatcut-inc"
@@ -67,11 +65,6 @@ def check() -> list[dict]:
             "id": "mcp", "name": "ChatCut MCP 登录", "status": "ok" if connected else ("warn" if mcp["ok"] else "fail"),
             "detail": mcp["output"], "fix": f"在终端运行：{LOGIN_COMMANDS['claude']}，然后在浏览器里授权",
         })
-    items.append({
-        "id": "api", "name": "Claude API 凭据（风格生成用）", "status": "ok" if llm.has_credentials() else "warn",
-        "detail": "已配置" if llm.has_credentials() else "未配置，风格生成会用离线模板",
-        "fix": "设置环境变量 ANTHROPIC_API_KEY，或运行 `ant auth login`",
-    })
     items.append({
         "id": "desktop", "name": "ChatCut Desktop 里的 Agent 选择", "status": "manual",
         "detail": "Desktop 没有公开接口，只能手动设置",
