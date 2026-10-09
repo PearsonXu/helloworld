@@ -1,0 +1,6 @@
+anthropic>=1.13
+claude-agent-sdk>=0.2.165
+fastapi>=0.143
+uvicorn>=0.53
+pytest>=8
+httpx>=0.27

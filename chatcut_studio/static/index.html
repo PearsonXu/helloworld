@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChatCut Studio</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1f2328; --muted: #6a6f76; --line: #e3e1dc;
+    --accent: #3b6ef5; --accent-ink: #ffffff; --ok: #2e8b57; --warn: #c58a12; --fail: #c4473a; --code: #f1efea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9aa0a6; --line: #30343a;
+      --accent: #7b9dff; --accent-ink: #0d1020; --code: #24282d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+  header { padding: 20px 16px 0; max-width: 1080px; margin: 0 auto; }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  nav { display: flex; gap: 4px; max-width: 1080px; margin: 16px auto 0; padding: 0 16px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  nav button { background: none; border: 0; padding: 10px 14px; font: inherit; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+  main { max-width: 1080px; margin: 0 auto; padding: 16px; }
+  section { display: none; } section.on { display: block; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 4px; font-size: 17px; } .card > p.sub { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); }
+  label > input, label > select, label > textarea { margin-top: 3px; }
+  input, select, textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; }
+  input[type=checkbox] { width: auto; margin-right: 6px; }
+  textarea { min-height: 90px; resize: vertical; }
+  textarea.code, pre { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: var(--code); }
+  textarea.code { min-height: 360px; }
+  button.btn { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; cursor: pointer; }
+  button.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0 0; padding: 10px 12px 12px; }
+  legend { padding: 0 6px; font-weight: 600; font-size: 14px; }
+  .check { display: grid; grid-template-columns: 22px 1fr; gap: 2px 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .check:first-child { border-top: 0; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.fail { background: var(--fail); } .dot.manual { background: var(--muted); }
+  .check .detail { grid-column: 2; color: var(--muted); font-size: 13px; white-space: pre-wrap; word-break: break-all; max-height: 4.8em; overflow: hidden; }
+  .check .fix { grid-column: 2; font-size: 13px; }
+  pre { padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); }
+  .list-item { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .list-item:first-child { border-top: 0; }
+  #log { max-height: 460px; overflow-y: auto; }
+  .ev { padding: 8px 0; border-top: 1px dashed var(--line); font-size: 14px; word-break: break-word; }
+  .ev.text { white-space: pre-wrap; }
+  .ev.tool { color: var(--muted); font-size: 13px; } .ev.error { color: var(--fail); }
+  .approval { border: 1px solid var(--warn); border-radius: 8px; padding: 10px; margin: 8px 0; }
+  .note { font-size: 13px; padding: 8px 10px; border-radius: 6px; background: var(--code); margin-top: 10px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ChatCut Studio</h1>
+  <p>把 ChatCut 的 Agent 设置、剪辑风格和一键剪辑放在一个界面里。</p>
+</header>
+<nav>
+  <button data-tab="env" class="on">① 环境与 Agent</button>
+  <button data-tab="style">② 风格记录器</button>
+  <button data-tab="library">风格库</button>
+  <button data-tab="run">③ 一键剪辑</button>
+</nav>
+<main>
+
+<!-- ① 环境 -->
+<section id="env" class="on">
+  <div class="card">
+    <h2>环境体检</h2>
+    <p class="sub">检查 Claude Code、ChatCut 插件、MCP 登录和 Claude API 凭据。</p>
+    <div class="row">
+      <button class="btn primary" onclick="loadEnv()">重新检查</button>
+      <button class="btn" onclick="envAction('install')">一键安装插件</button>
+      <button class="btn" onclick="envAction('update')">更新插件</button>
+    </div>
+    <div id="checks" style="margin-top:12px" class="muted">检查中…</div>
+    <pre id="envOut" style="display:none"></pre>
+  </div>
+  <div class="card">
+    <h2>登录 ChatCut（需要你在终端里完成）</h2>
+    <p class="sub">登录会打开浏览器完成授权，需要交互式终端，所以这一步请复制命令自己运行；登录后开一个新会话插件工具才会加载。</p>
+    <div id="loginCmds"></div>
+  </div>
+</section>
+
+<!-- ② 风格记录器 -->
+<section id="style">
+  <div class="two">
+    <div class="card">
+      <h2>方式 A：填问卷</h2>
+      <p class="sub">把你的剪辑习惯填成参数，生成 SKILL.md。</p>
+      <form id="pf" onsubmit="return false"></form>
+    </div>
+    <div class="card">
+      <h2>方式 B：从成片学习</h2>
+      <p class="sub">在 Claude Code 里让 ChatCut 读出一个满意项目的时间线（JSON），粘贴到这里，Claude 会反推出风格参数并填回左边问卷。</p>
+      <label>时间线 JSON<textarea id="timeline" class="code" style="min-height:220px" placeholder='{"tracks": [...]}'></textarea></label>
+      <label style="margin-top:8px">补充说明（可选）<textarea id="learnNotes" style="min-height:60px" placeholder="比如：这是我最满意的一期，字幕风格要保留"></textarea></label>
+      <div class="row" style="margin-top:8px"><button class="btn" onclick="learn()">分析并填入问卷</button><span id="learnMsg" class="muted"></span></div>
+      <div class="note">怎么拿到时间线：在 Claude Code 里说「用 ChatCut 读取项目 XXX 的完整时间线，原样输出 JSON」。</div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>生成的 SKILL.md</h2>
+    <p class="sub">可以直接修改。保存到风格库后，可一键安装到 Claude Code 的 skills 目录。</p>
+    <div class="row">
+      <label style="display:flex;align-items:center"><input type="checkbox" id="useAi" checked>用 Claude 润色（不勾选则用离线模板）</label>
+      <button class="btn primary" onclick="generate()">生成 SKILL.md</button>
+      <button class="btn" onclick="saveStyle()">保存到风格库</button>
+      <span id="genMsg" class="muted"></span>
+    </div>
+    <textarea id="skillMd" class="code" style="margin-top:10px" placeholder="点击「生成 SKILL.md」"></textarea>
+  </div>
+</section>
+
+<!-- 风格库 -->
+<section id="library">
+  <div class="card">
+    <h2>风格库</h2>
+    <p class="sub" id="skillsDir"></p>
+    <div id="styleList" class="muted">加载中…</div>
+    <div class="note">同步到 ChatCut「My Skills」：目前请在 ChatCut 的 AI 面板里点书本图标 → 保存 Skill，把 SKILL.md 内容粘进去。等确认 ChatCut MCP 的 manage_skill 工具参数后，这里会改成一键同步。</div>
+  </div>
+</section>
+
+<!-- ③ 一键剪辑 -->
+<section id="run">
+  <div class="two">
+    <div class="card">
+      <h2>剪辑任务</h2>
+      <label>使用的风格<select id="runStyle"><option value="">（不使用风格）</option></select></label>
+      <label style="margin-top:8px">要做什么<textarea id="task" placeholder="比如：用这 5 张图和歌曲做一支竖版歌词 MV，歌词按 LRC 时间轴出现"></textarea></label>
+      <label style="margin-top:8px">素材（每行一个：路径或 ChatCut 里的素材名）<textarea id="assets" placeholder="mv_backgrounds/vertical_1080x1920/01_巷口暖灯.jpg&#10;song.mp3&#10;lyrics.lrc"></textarea></label>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="runBtn" onclick="startRun()">交给 Agent 执行</button>
+        <button class="btn" onclick="copyPrompt()">只复制提示词</button>
+      </div>
+      <div class="note">「交给 Agent 执行」用本机 Claude Code 里已登录的 ChatCut 插件。会花积分、上传、删除或导出的操作，都会先在右侧弹出确认。<br>「只复制提示词」可以粘到 ChatCut Desktop 的 AI 面板里用。</div>
+    </div>
+    <div class="card">
+      <h2>执行过程</h2>
+      <div id="log" class="muted">还没有开始</div>
+    </div>
+  </div>
+</section>
+
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function api(path, opts = {}) {
+  const r = await fetch(path, {headers: {"Content-Type": "application/json"}, ...opts});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+// ---------- 标签页 ----------
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll("section").forEach((s) => s.classList.toggle("on", s.id === b.dataset.tab));
+  if (b.dataset.tab === "library") loadStyles();
+  if (b.dataset.tab === "run") loadStyleOptions();
+});
+
+// ---------- ① 环境 ----------
+async function loadEnv() {
+  $("#checks").textContent = "检查中…";
+  try {
+    const {checks, login} = await api("/api/env");
+    $("#checks").innerHTML = checks.map((c) => `
+      <div class="check"><span class="dot ${c.status}"></span><strong>${esc(c.name)}</strong>
+        <div class="detail">${esc(c.detail)}</div>
+        ${c.status === "ok" ? "" : `<div class="fix">${esc(c.fix)}</div>`}</div>`).join("");
+    $("#loginCmds").innerHTML = Object.entries(login).map(([k, v]) =>
+      `<div class="row" style="margin:6px 0"><span class="pill">${esc(k)}</span><code>${esc(v)}</code>
+       <button class="btn" onclick="navigator.clipboard.writeText('${esc(v)}')">复制</button></div>`).join("");
+  } catch (e) { $("#checks").textContent = "检查失败：" + e.message; }
+}
+async function envAction(a) {
+  if (!confirm(a === "install" ? "将运行 claude plugin marketplace add / install，继续？" : "将更新 ChatCut 插件，继续？")) return;
+  $("#envOut").style.display = "block"; $("#envOut").textContent = "运行中…";
+  try {
+    const {results} = await api("/api/env/" + a, {method: "POST"});
+    $("#envOut").textContent = results.map((r) => `$ ${r.cmd}\n${r.output}\n${r.ok ? "✓ 成功" : "✗ 失败"}`).join("\n\n");
+    loadEnv();
+  } catch (e) { $("#envOut").textContent = e.message; }
+}
+
+// ---------- ② 问卷 ----------
+const FORM = [
+  ["基本", [
+    ["name", "风格名称", "text"], ["description", "一句话说明（什么视频、什么时候用）", "text"],
+    ["aspect_ratio", "画幅", ["9:16", "16:9", "1:1", "4:5"]], ["resolution", "分辨率", "text"], ["fps", "帧率", "number"]]],
+  ["节奏", [
+    ["pacing.avg_shot_seconds", "平均镜头时长（秒）", "number"], ["pacing.cut_on_beat", "按音乐节拍剪切", "bool"],
+    ["pacing.hook_seconds", "开头抓人片段（秒）", "number"], ["pacing.notes", "节奏补充", "text"]]],
+  ["字幕", [
+    ["captions.enabled", "添加字幕", "bool"], ["captions.font", "字体", "text"],
+    ["captions.size", "字号", ["小", "中", "大", "特大"]], ["captions.color", "颜色", "text"], ["captions.stroke", "描边 / 阴影", "text"],
+    ["captions.position", "位置", ["底部", "居中", "顶部", "左侧竖排", "右侧竖排", "随画面变化"]],
+    ["captions.animation", "出入场动画", "text"], ["captions.keyword_highlight", "关键词突出", "bool"],
+    ["captions.max_chars_per_line", "每行最多字数", "number"]]],
+  ["画面", [
+    ["transitions.style", "转场风格", "text"], ["transitions.duration_seconds", "转场时长（秒）", "number"],
+    ["color_grade.look", "调色风格", "text"], ["color_grade.notes", "调色补充", "text"],
+    ["motion.ken_burns", "静态图缓慢推拉", "bool"], ["motion.intensity", "运动强度", ["无", "轻微", "适中", "强烈"]]]],
+  ["音频与包装", [
+    ["audio.target_lufs", "目标响度（LUFS）", "number"], ["audio.music_ducking", "人声时压低音乐", "bool"],
+    ["audio.fade_in_seconds", "淡入（秒）", "number"], ["audio.fade_out_seconds", "淡出（秒）", "number"],
+    ["branding.intro", "片头", "text"], ["branding.outro", "片尾", "text"], ["branding.watermark", "水印 / logo", "text"]]],
+  ["规则", [["rules", "必须遵守（每行一条）", "lines"], ["avoid", "不要这样做（每行一条）", "lines"]]],
+];
+const getPath = (o, p) => p.split(".").reduce((a, k) => a?.[k], o);
+function setPath(o, p, v) { const ks = p.split("."); ks.slice(0, -1).reduce((a, k) => a[k] ??= {}, o)[ks.at(-1)] = v; }
+function renderForm() {
+  $("#pf").innerHTML = FORM.map(([title, fields]) => `<fieldset><legend>${title}</legend><div class="grid">` +
+    fields.map(([k, label, t]) => {
+      if (t === "bool") return `<label style="display:flex;align-items:center;margin-top:20px"><input type="checkbox" name="${k}">${label}</label>`;
+      if (Array.isArray(t)) return `<label>${label}<select name="${k}">${t.map((o) => `<option>${o}</option>`).join("")}</select></label>`;
+      if (t === "lines") return `<label style="grid-column:1/-1">${label}<textarea name="${k}"></textarea></label>`;
+      return `<label>${label}<input name="${k}" type="${t === "number" ? "number" : "text"}" step="any"></label>`;
+    }).join("") + `</div></fieldset>`).join("");
+}
+function fillForm(p) {
+  for (const [, fields] of FORM) for (const [k, , t] of fields) {
+    const el = $(`#pf [name="${k}"]`); const v = getPath(p, k);
+    if (t === "bool") el.checked = !!v; else if (t === "lines") el.value = (v || []).join("\n"); else el.value = v ?? "";
+  }
+}
+function readForm() {
+  const p = {};
+  for (const [, fields] of FORM) for (const [k, , t] of fields) {
+    const el = $(`#pf [name="${k}"]`);
+    const v = t === "bool" ? el.checked : t === "number" ? Number(el.value) : t === "lines" ? el.value.split("\n").map((s) => s.trim()).filter(Boolean) : el.value;
+    setPath(p, k, v);
+  }
+  return p;
+}
+async function generate() {
+  const p = readForm();
+  if (!p.name.trim() || !p.description.trim()) { $("#genMsg").textContent = "请先填写风格名称和一句话说明"; return; }
+  $("#genMsg").textContent = "生成中…";
+  try {
+    const r = await api("/api/styles/generate", {method: "POST", body: JSON.stringify({profile: p, use_ai: $("#useAi").checked})});
+    $("#skillMd").value = r.skill_md;
+    $("#genMsg").textContent = (r.source === "claude" ? "已由 Claude 生成" : "已用离线模板生成") + (r.warning ? "（" + r.warning + "）" : "");
+  } catch (e) { $("#genMsg").textContent = "失败：" + e.message; }
+}
+async function saveStyle() {
+  if (!$("#skillMd").value.trim()) { $("#genMsg").textContent = "请先生成 SKILL.md"; return; }
+  try {
+    const r = await api("/api/styles", {method: "POST", body: JSON.stringify({profile: readForm(), skill_md: $("#skillMd").value})});
+    $("#genMsg").textContent = "已保存：" + r.slug;
+  } catch (e) { $("#genMsg").textContent = "保存失败：" + e.message; }
+}
+async function learn() {
+  $("#learnMsg").textContent = "分析中…";
+  try {
+    const r = await api("/api/styles/learn", {method: "POST", body: JSON.stringify({timeline: $("#timeline").value, notes: $("#learnNotes").value})});
+    fillForm(r.profile); $("#learnMsg").textContent = "已填入左侧问卷，请检查后生成";
+  } catch (e) { $("#learnMsg").textContent = "失败：" + e.message; }
+}
+
+// ---------- 风格库 ----------
+async function loadStyles() {
+  const {styles, skills_dir} = await api("/api/styles");
+  $("#skillsDir").textContent = "安装位置：" + skills_dir;
+  $("#styleList").innerHTML = styles.length ? styles.map((s) => `
+    <div class="list-item"><div><strong>${esc(s.name)}</strong> <span class="pill">${esc(s.slug)}</span>
+      ${s.installed ? '<span class="pill">已安装</span>' : ""}<div class="muted">${esc(s.description)}</div></div>
+      <div class="row"><button class="btn" onclick="editStyle('${s.slug}')">编辑</button>
+        <button class="btn" onclick="installStyle('${s.slug}')">安装到 Claude Code</button>
+        <button class="btn" onclick="delStyle('${s.slug}')">删除</button></div></div>`).join("") : "风格库还是空的，先去「风格记录器」生成一个。";
+}
+async function editStyle(slug) {
+  const s = await api("/api/styles/" + slug);
+  fillForm(s.profile); $("#skillMd").value = s.skill_md;
+  document.querySelector('nav button[data-tab="style"]').click();
+}
+async function installStyle(slug) {
+  try { const r = await api(`/api/styles/${slug}/install`, {method: "POST"}); alert("已安装到 " + r.path); loadStyles(); }
+  catch (e) { alert("安装失败：" + e.message); }
+}
+async function delStyle(slug) { if (confirm("删除这个风格？")) { await api("/api/styles/" + slug, {method: "DELETE"}); loadStyles(); } }
+
+// ---------- ③ 一键剪辑 ----------
+async function loadStyleOptions() {
+  const {styles} = await api("/api/styles"); const cur = $("#runStyle").value;
+  $("#runStyle").innerHTML = '<option value="">（不使用风格）</option>' + styles.map((s) => `<option value="${s.slug}">${esc(s.name)}</option>`).join("");
+  $("#runStyle").value = cur;
+}
+const runBody = () => JSON.stringify({task: $("#task").value, assets: $("#assets").value, style: $("#runStyle").value || null});
+async function copyPrompt() {
+  try { const {prompt} = await api("/api/prompt", {method: "POST", body: runBody()}); await navigator.clipboard.writeText(prompt); alert("提示词已复制"); }
+  catch (e) { alert(e.message); }
+}
+function logEv(html, cls = "") { const d = document.createElement("div"); d.className = "ev " + cls; d.innerHTML = html; $("#log").append(d); $("#log").scrollTop = 1e9; return d; }
+async function startRun() {
+  let id;
+  try { ({id} = await api("/api/run", {method: "POST", body: runBody()})); } catch (e) { alert(e.message); return; }
+  $("#log").innerHTML = ""; $("#runBtn").disabled = true;
+  const es = new EventSource(`/api/run/${id}/events`);
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "text") logEv(esc(ev.text), "text");
+    else if (ev.type === "tool") logEv(`🔧 ${esc(ev.tool)}`, "tool");
+    else if (ev.type === "decision" && ev.decision !== "allow") logEv(`⛔ 已拒绝：${esc(ev.tool)}`, "tool");
+    else if (ev.type === "approval") {
+      const d = logEv(`<div class="approval"><strong>需要你确认</strong>：${esc(ev.tool)}<pre>${esc(JSON.stringify(ev.input, null, 2))}</pre>
+        <div class="row"><button class="btn primary">允许</button><button class="btn">拒绝</button></div></div>`);
+      const [yes, no] = d.querySelectorAll("button");
+      const answer = async (allow) => { yes.disabled = no.disabled = true; await api(`/api/run/${id}/approve`, {method: "POST", body: JSON.stringify({id: ev.id, allow})}); d.querySelector(".approval").append(allow ? " ✓ 已允许" : " ✗ 已拒绝"); };
+      yes.onclick = () => answer(true); no.onclick = () => answer(false);
+    }
+    else if (ev.type === "result") logEv(`<strong>${ev.is_error ? "执行出错" : "完成"}</strong>　轮数 ${ev.turns}${ev.cost_usd != null ? "　费用约 $" + ev.cost_usd.toFixed(3) : ""}`);
+    else if (ev.type === "error") logEv(esc(ev.message), "error");
+    else if (ev.type === "done") { es.close(); $("#runBtn").disabled = false; }
+  };
+  es.onerror = () => { es.close(); $("#runBtn").disabled = false; };
+}
+
+// ---------- 启动 ----------
+renderForm();
+api("/api/profile/default").then(fillForm);
+loadEnv();
+</script>
+</body>
+</html>
