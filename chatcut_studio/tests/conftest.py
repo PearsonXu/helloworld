@@ -11,9 +11,10 @@ from fastapi import FastAPI, Request
 @pytest.fixture(autouse=True)
 def isolated_data(tmp_path, monkeypatch):
     """每个测试用独立的数据目录，不碰真实设置和 ~/.claude/skills。"""
-    from chatcut_studio import chatcut_mcp, settings, styles
+    from chatcut_studio import chatcut_mcp, jizura, settings, styles
 
     monkeypatch.setattr(settings, "DATA_ROOT", tmp_path)
+    monkeypatch.setattr(jizura, "DATA_ROOT", tmp_path)
     monkeypatch.setattr(chatcut_mcp, "DATA_ROOT", tmp_path)
     monkeypatch.setattr(styles, "DATA_DIR", tmp_path / "styles")
     monkeypatch.setattr(styles, "CLAUDE_SKILLS_DIR", tmp_path / "skills")

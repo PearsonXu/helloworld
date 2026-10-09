@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import chatcut_mcp, envcheck, lyrics, optimize, settings, styles
+from . import chatcut_mcp, envcheck, jizura, lyrics, optimize, settings, styles
 from .agent import RunManager, build_prompt, classify
 from .presets import MAX_STYLES
 from .profile import StyleProfile, render_skill_md
@@ -235,6 +235,12 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
         return {"skill_md": render_skill_md(req.profile)}
 
     # ---------- 歌词字幕（本地渲染，含闪光扫过） ----------
+    @app.get("/api/jizura/meta")
+    def jizura_meta():
+        return {"themes": [{"name": k, "desc": v["desc"]} for k, v in jizura.THEMES.items()],
+                "palettes": [{"key": k, "name": v} for k, v in jizura.PALETTES.items() if not k.startswith("hr")],
+                "missing_fonts": jizura.ensure_fonts(download=False)}
+
     @app.get("/api/lyrics/backgrounds")
     def lyric_backgrounds():
         return {"backgrounds": _backgrounds()}
@@ -252,6 +258,16 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
         c = req.profile.captions
         bgs = [_bg_path(req.background)] if req.background else []
         d = _render_dir()
+        if c.engine == "JIZURA 动态排版":
+            lines = lyrics.sample_lines(req.text, seconds_per_line=3.5)  # 动态排版一句会切成几个镜头，给长一点
+            try:
+                video, info = await jizura.render(lines, c.jizura, d / "preview", bgs, None, 0.5)
+                shots = await asyncio.to_thread(lyrics.frames, video, jizura.preview_times(info, 3), d)
+            except lyrics.RenderError as e:
+                raise HTTPException(500, str(e))
+            return {"video": _url(video), "frames": [_url(p) for p in shots], "engine": "jizura",
+                    "palette": info.get("palette"), "palette_name": jizura.PALETTES.get(info.get("palette"), ""),
+                    "cuts": [{"text": x["text"], "layout": x["layout"], "treat": x["treat"]} for x in info["cuts"]]}
         try:
             video = await asyncio.to_thread(lyrics.render, lines, c, d / "preview", bgs, None, 0.5)
             target = next((ln for ln in lines if c.shine != "无" and lyrics.shine_applies(ln, c)), lines[0])
@@ -273,8 +289,17 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             audio = Path(req.audio.strip()).expanduser()
             if not audio.is_file():
                 raise HTTPException(400, f"找不到音频文件：{audio}")
-        bgs = [] if req.overlay else [_bg_path(n) for n in req.backgrounds]
+        bgs = [_bg_path(n) for n in req.backgrounds]
         d = _render_dir()
+        if profile.captions.engine == "JIZURA 动态排版":
+            # 透明层模式下背景图不画进去，只用来判断亮度、挑配色
+            try:
+                out, info = await jizura.render(lines, profile.captions.jizura, d / "lyrics", bgs, audio, 1.0, 30, req.overlay)
+            except lyrics.RenderError as e:
+                raise HTTPException(500, str(e))
+            return {"url": _url(out), "path": str(out), "lines": len(lines), "duration": round(info["duration"], 1),
+                    "engine": "jizura", "palette": info.get("palette"), "bpm": info.get("bpm"), "cuts": len(info["cuts"])}
+        bgs = [] if req.overlay else bgs
         try:
             out = await asyncio.to_thread(lyrics.render, lines, profile.captions, d / "lyrics", bgs, audio,
                                           1.0, 30, req.overlay)

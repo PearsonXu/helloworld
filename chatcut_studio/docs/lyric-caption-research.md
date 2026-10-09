@@ -128,3 +128,7 @@ GitHub 上没有找到现成的完整项目，只有零散的技术示例：CSS 
 | [TextAlive App API](https://scrapbox.io/textalive/TextAlive%20App%20API) | — | 日本产总研的歌词动画框架，初音未来「魔法未来」编程大赛在用 | JavaScript | 未核实 |
 
 没有找到把「同一句放大当背景 + 另一层重叠」做成独立预设的项目；pv-tool 的效果最接近，但不能商用。
+
+## 已接入：JIZURA
+
+用户指定以 [JIZURA](https://github.com/852wa/JIZURA)（MIT，v0.10.1）为基础融合，见 `chatcut_studio/jizura.py` 和 README 的「JIZURA 动态排版」一节。四套主题的样张：`samples/jizura_themes.jpg`。

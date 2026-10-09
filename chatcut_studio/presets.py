@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from .profile import (
-    Audio, Branding, Captions, ColorGrade, Motion, Pacing, StyleProfile, Transitions,
+    Audio, Branding, Captions, ColorGrade, Jizura, Motion, Pacing, StyleProfile, Transitions,
 )
 
 PRESETS: dict[str, StyleProfile] = {
@@ -34,7 +34,9 @@ PRESETS: dict[str, StyleProfile] = {
         aspect_ratio="9:16", resolution="1080x1920", fps=24,
         pacing=Pacing(avg_shot_seconds=5, cut_on_beat=False, hook_seconds=3, notes="镜头之间留呼吸感，不赶节奏"),
         captions=Captions(font="思源宋体", size="中", color="#F2EFE8", stroke="无", position="居中",
-                          animation="字距收拢淡入 0.6 秒", keyword_highlight=False, max_chars_per_line=12),
+                          animation="字距收拢淡入 0.6 秒", keyword_highlight=False, max_chars_per_line=12,
+                          engine="JIZURA 动态排版",
+                          jizura=Jizura(theme="叠字海报", seed=1, motion=0.55, glitch=0.1, decor=0.25, density=0.45)),
         transitions=Transitions(style="硬切为主，情绪转折处用黑场过渡", duration_seconds=0.8),
         color_grade=ColorGrade(look="电影感哑光、轻微抬黑", notes="加细胶片颗粒和轻微暗角；冷暖对比克制"),
         audio=Audio(music_ducking=True, target_lufs=-16, fade_in_seconds=2, fade_out_seconds=3),
@@ -63,7 +65,9 @@ PRESETS: dict[str, StyleProfile] = {
         aspect_ratio="9:16", resolution="1080x1920", fps=30,
         pacing=Pacing(avg_shot_seconds=0.8, cut_on_beat=True, hook_seconds=2,
                       notes="主歌每拍一切，副歌半拍一切；高潮前留一个 1–2 秒的长镜头蓄力"),
-        captions=Captions(enabled=False),
+        captions=Captions(engine="JIZURA 动态排版", font="得意黑", size="大",
+                          jizura=Jizura(theme="动感卡点", seed=1, motion=0.85, glitch=0.45, decor=0.5, density=0.7,
+                                        flash=True)),
         transitions=Transitions(style="硬切为主，重拍处用快速推拉或甩镜", duration_seconds=0.15),
         color_grade=ColorGrade(look="高对比、偏鲜艳", notes="所有素材统一色温"),
         audio=Audio(music_ducking=False, target_lufs=-12, fade_in_seconds=0, fade_out_seconds=1.5),

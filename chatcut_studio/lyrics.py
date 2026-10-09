@@ -251,6 +251,28 @@ def _run(cmd: list[str], timeout: int) -> None:
         raise RenderError("ffmpeg 失败：" + p.stderr.strip()[-800:])
 
 
+def background_schedule(lines: list[Line], bgs: list[Path]) -> list[float]:
+    """每张背景图开始显示的时间：换图点卡在歌词句与句之间（按句数平均分给每张图）。"""
+    per = max(1, len(lines) // max(1, len(bgs)))
+    return [lines[min(i * per, len(lines) - 1)].start if i else 0.0 for i in range(len(bgs))]
+
+
+def background_input(lines: list[Line], bgs: list[Path], duration: float, w: int, h: int, fps: int, out: Path) -> list[str]:
+    """背景图的 ffmpeg 输入参数：多张图轮换；没有图时用纯色。"""
+    if not bgs:
+        return ["-f", "lavfi", "-i", f"color=c=0x1d2b44:s={w}x{h}:r={fps}:d={duration:.2f}"]
+    cuts = background_schedule(lines, bgs) + [duration]
+    listing = out.with_suffix(".bg.txt")
+    listing.write_text("".join(
+        f"file '{Path(b).resolve()}'\nduration {max(0.1, cuts[i + 1] - cuts[i]):.3f}\n" for i, b in enumerate(bgs))
+        + f"file '{Path(bgs[-1]).resolve()}'\n", "utf-8")
+    return ["-f", "concat", "-safe", "0", "-i", str(listing)]
+
+
+def fit_filter(w: int, h: int, fps: int) -> str:
+    return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={fps}"
+
+
 def render(lines: list[Line], c: Captions, out: Path, backgrounds: list[Path] | None = None,
            audio: Path | None = None, scale: float = 1.0, fps: int = 30, overlay: bool = False,
            timeout: int = 1800) -> Path:
@@ -269,19 +291,8 @@ def render(lines: list[Line], c: Captions, out: Path, backgrounds: list[Path] | 
         enc = ["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le"]
         out = out.with_suffix(".mov")
     else:
-        bgs = backgrounds or []
-        if not bgs:
-            cmd += ["-f", "lavfi", "-i", f"color=c=0x1d2b44:s={w}x{h}:r={fps}:d={duration:.2f}"]
-        else:
-            # 换图点卡在歌词句与句之间：按句数平均分给每张图
-            per = max(1, len(lines) // len(bgs))
-            cuts = [lines[min(i * per, len(lines) - 1)].start if i else 0.0 for i in range(len(bgs))] + [duration]
-            listing = out.with_suffix(".bg.txt")
-            listing.write_text("".join(
-                f"file '{Path(b).resolve()}'\nduration {max(0.1, cuts[i + 1] - cuts[i]):.3f}\n" for i, b in enumerate(bgs))
-                + f"file '{Path(bgs[-1]).resolve()}'\n", "utf-8")
-            cmd += ["-f", "concat", "-safe", "0", "-i", str(listing)]
-        vf = f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},fps={fps},{_ass_filter(ass_path)},format=yuv420p"
+        cmd += background_input(lines, backgrounds or [], duration, w, h, fps, out)
+        vf = f"{fit_filter(w, h, fps)},{_ass_filter(ass_path)},format=yuv420p"
         enc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
         out = out.with_suffix(".mp4")
     if audio:

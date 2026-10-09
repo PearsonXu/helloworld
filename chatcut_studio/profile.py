@@ -19,8 +19,23 @@ class Pacing(BaseModel):
     notes: str = Field("", description="节奏补充说明")
 
 
+class Jizura(BaseModel):
+    """JIZURA 动态排版（歌词 PV 风格）的参数。主题是我们从 JIZURA 部件库里挑选组合的预设，见 jizura.py。"""
+    theme: Literal["叠字海报", "清新抒情", "动感卡点", "日系文字PV"] = Field("叠字海报", description="排版主题")
+    palette: str = Field("auto", description="配色：auto 表示由主题按随机种子挑选，或 JIZURA 配色名如 ocean / mono / sunset")
+    seed: int = Field(1, description="随机种子：同一个种子结果完全相同，换种子换一种编排")
+    motion: float = Field(0.6, ge=0, le=1, description="动作幅度 0–1")
+    glitch: float = Field(0.15, ge=0, le=1, description="故障 / 色偏强度 0–1")
+    decor: float = Field(0.3, ge=0, le=1, description="装饰元素多少 0–1")
+    density: float = Field(0.5, ge=0, le=1, description="分镜细碎程度 0–1：越大一句歌词切成越多镜头")
+    flash: bool = Field(False, description="重拍闪白")
+    chorus_hit: bool = Field(True, description="副歌句做一次「重击」（闪光 + 震动）")
+
+
 class Captions(BaseModel):
     enabled: bool = True
+    engine: Literal["ASS 字幕", "JIZURA 动态排版"] = Field("ASS 字幕", description="本地渲染歌词时用哪个引擎")
+    jizura: Jizura = Field(default_factory=Jizura)
     font: str = Field("思源宋体", description="字体")
     size: Literal["小", "中", "大", "特大"] = "中"
     color: str = Field("#FFFFFF", description="主色")
@@ -137,6 +152,9 @@ def render_skill_md(p: StyleProfile, slug: str | None = None) -> str:
             f"| 字幕动画 | {c.animation} |",
             f"| 关键词突出 | {_yn(c.keyword_highlight)} |",
         ]
+        if c.engine == "JIZURA 动态排版":
+            j = c.jizura
+            lines.append(f"| 歌词动态排版 | JIZURA「{j.theme}」，配色 {j.palette}，种子 {j.seed}（本地渲染为透明字幕层） |")
         if c.shine != "无":
             lines.append(f"| 闪光扫过 | {SHINE_SCOPE[c.shine]}，{c.shine_color}，每次约 {c.shine_seconds:g} 秒 |")
     else:
@@ -166,7 +184,13 @@ def render_skill_md(p: StyleProfile, slug: str | None = None) -> str:
     if p.motion.ken_burns:
         lines.append(f"{step}. 给静态图片加缓慢推拉（{p.motion.intensity}），方向交替，避免同向重复。")
         step += 1
-    if c.enabled:
+    if c.enabled and c.engine == "JIZURA 动态排版":
+        lines.append(
+            f"{step}. 歌词：不要用 ChatCut 自带字幕。用户会提供由 ChatCut Studio 本地渲染好的透明歌词层（.mov），"
+            "把它导入并放在最上层视频轨，与音频对齐起点，不要缩放或调色。"
+        )
+        step += 1
+    elif c.enabled:
         lines.append(
             f"{step}. 添加字幕：{c.font}、{c.size}号、{c.color}、{c.stroke}，位置{c.position}，"
             f"{c.animation}" + ("，关键词放大或换色突出" if c.keyword_highlight else "") + "。断行按语义，不拆词。"

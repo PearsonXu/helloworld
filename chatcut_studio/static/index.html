@@ -189,7 +189,7 @@
           <label style="grid-column:span 2">歌词（每行一句）<textarea id="pvText" style="min-height:70px">巷口{灯光}忽明忽灭
 你看啊仲夏的{弯月} #chorus</textarea></label>
         </div>
-        <div class="row" style="margin-top:8px"><button class="btn primary" onclick="lyricPreview()">生成样张</button><span id="pvMsg" class="muted"></span></div>
+        <div class="row" style="margin-top:8px"><button class="btn primary" onclick="lyricPreview()">生成样张</button><button class="btn" onclick="reroll()" title="JIZURA：随机种子加 1，换一种编排">换一种编排</button><span id="pvMsg" class="muted"></span></div>
         <div id="pvOut"></div>
       </div>
 
@@ -379,12 +379,18 @@ const FORM = [
     ["aspect_ratio", "画幅", ["9:16", "16:9", "1:1", "4:5"]], ["resolution", "分辨率", "text"], ["fps", "帧率", "number"]]],
   ["节奏", [["pacing.avg_shot_seconds", "平均镜头时长（秒）", "number"], ["pacing.cut_on_beat", "按音乐节拍剪切", "bool"],
     ["pacing.hook_seconds", "开头抓人片段（秒）", "number"], ["pacing.notes", "节奏补充", "wide"]]],
-  ["字幕", [["captions.enabled", "添加字幕", "bool"], ["captions.font", "字体", "text"],
+  ["字幕", [["captions.enabled", "添加字幕", "bool"], ["captions.engine", "本地渲染引擎", ["ASS 字幕", "JIZURA 动态排版"]],
+    ["captions.font", "字体", "text"],
     ["captions.size", "字号", ["小", "中", "大", "特大"]], ["captions.color", "颜色", "text"], ["captions.stroke", "描边 / 阴影", "text"],
     ["captions.position", "位置", ["底部", "居中", "顶部", "左侧竖排", "右侧竖排", "随画面变化"]],
     ["captions.animation", "出入场动画", "text"], ["captions.keyword_highlight", "关键词突出", "bool"], ["captions.max_chars_per_line", "每行最多字数", "number"],
     ["captions.shine", "闪光扫过", ["无", "关键词", "整句", "仅副歌"]], ["captions.shine_color", "闪光颜色", "color"],
     ["captions.shine_seconds", "闪光时长（秒）", "number"]]],
+  ["动态排版（JIZURA，引擎选它时生效）", [["captions.jizura.theme", "排版主题", ["叠字海报", "清新抒情", "动感卡点", "日系文字PV"]],
+    ["captions.jizura.palette", "配色", ["auto"]], ["captions.jizura.seed", "随机种子（换一个数 = 换一种编排）", "number"],
+    ["captions.jizura.motion", "动作幅度 0–1", "number"], ["captions.jizura.glitch", "故障 / 色偏 0–1", "number"],
+    ["captions.jizura.decor", "装饰多少 0–1", "number"], ["captions.jizura.density", "分镜细碎 0–1", "number"],
+    ["captions.jizura.flash", "重拍闪白", "bool"], ["captions.jizura.chorus_hit", "副歌重击（闪光 + 震动）", "bool"]]],
   ["画面", [["transitions.style", "转场风格", "text"], ["transitions.duration_seconds", "转场时长（秒）", "number"],
     ["color_grade.look", "调色风格", "text"], ["color_grade.notes", "调色补充", "text"],
     ["motion.ken_burns", "静态图缓慢推拉", "bool"], ["motion.intensity", "运动强度", ["无", "轻微", "适中", "强烈"]]]],
@@ -524,6 +530,16 @@ async function feedbackFromRun() {
 }
 
 // ================= 歌词字幕 =================
+let JZ = null;
+async function loadJizuraMeta() {
+  JZ = await api("/api/jizura/meta");
+  const sel = document.querySelector('#pf [name="captions.jizura.palette"]');
+  sel.innerHTML = '<option value="auto">auto（按主题和背景亮度自动挑）</option>' +
+    JZ.palettes.map((p) => `<option value="${p.key}">${esc(p.name)}（${p.key}）</option>`).join("");
+  sel.value = (typeof cur === "object" && cur?.profile?.captions?.jizura?.palette) || "auto";
+  const th = document.querySelector('#pf [name="captions.jizura.theme"]');
+  th.title = JZ.themes.map((x) => x.name + "：" + x.desc).join("\n");
+}
 let BGS = [];
 async function loadBackgrounds() {
   BGS = (await api("/api/lyrics/backgrounds")).backgrounds;
@@ -537,11 +553,23 @@ async function lyricPreview() {
   $("#pvMsg").textContent = "渲染中…（几秒）"; $("#pvOut").innerHTML = "";
   try {
     const r = await post("/api/lyrics/preview", {profile: readForm(), text: $("#pvText").value, background: $("#pvBg").value});
-    $("#pvMsg").textContent = r.shine_line ? `闪光扫过「${r.shine_line}」：扫光前 / 扫到一半 / 扫完` : "当前参数下没有句子需要闪光扫过（检查「闪光扫过」设置和 {关键词} / #chorus 标记）";
+    if (r.engine === "jizura") {
+      const used = [...new Set(r.cuts.map((c) => c.layout))].slice(0, 6).join("、");
+      $("#pvMsg").textContent = `JIZURA 动态排版 · 配色 ${r.palette_name || r.palette} · ${r.cuts.length} 个镜头（版式：${used}）`;
+    } else {
+      $("#pvMsg").textContent = r.shine_line ? `闪光扫过「${r.shine_line}」：扫光前 / 扫到一半 / 扫完` : "当前参数下没有句子需要闪光扫过（检查「闪光扫过」设置和 {关键词} / #chorus 标记）";
+    }
     $("#pvOut").innerHTML = `<div class="row" style="margin-top:8px;align-items:flex-start">
       <video src="${r.video}" controls autoplay loop muted playsinline style="width:180px;border-radius:6px"></video>
       ${r.frames.map((f) => `<img src="${f}" style="width:180px;border-radius:6px">`).join("")}</div>`;
   } catch (e) { $("#pvMsg").textContent = e.message; }
+}
+function reroll() {
+  const engine = document.querySelector('#pf [name="captions.engine"]');
+  if (engine.value !== "JIZURA 动态排版") engine.value = "JIZURA 动态排版";
+  const s = document.querySelector('#pf [name="captions.jizura.seed"]');
+  s.value = (Number(s.value) || 0) + 1;
+  lyricPreview();
 }
 async function lyricRender() {
   const style = $("#runStyle").value;
@@ -551,7 +579,7 @@ async function lyricRender() {
   $("#renderBtn").disabled = true; $("#renderMsg").textContent = "渲染中…整首歌大约需要一两分钟"; $("#renderOut").innerHTML = "";
   try {
     const r = await post("/api/lyrics/render", {style, lrc: $("#lrc").value, backgrounds, audio: $("#audioPath").value, overlay});
-    $("#renderMsg").textContent = `完成：${r.lines} 句，${r.duration} 秒`;
+    $("#renderMsg").textContent = `完成：${r.lines} 句，${r.duration} 秒` + (r.engine === "jizura" ? `，${r.cuts} 个镜头，配色 ${r.palette}` + (r.bpm ? `，BPM ${r.bpm}` : "") : "");
     $("#renderOut").innerHTML = `<div class="note">文件：<code>${esc(r.path)}</code>　<a href="${r.url}" download>下载</a></div>` +
       (overlay ? "" : `<video src="${r.url}" controls style="width:220px;margin-top:8px;border-radius:6px"></video>`);
   } catch (e) { $("#renderMsg").textContent = e.message; }
@@ -562,6 +590,7 @@ async function lyricRender() {
 renderForm();
 loadSettings();
 loadBackgrounds();
+loadJizuraMeta();
 </script>
 </body>
 </html>

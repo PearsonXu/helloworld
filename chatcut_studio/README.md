@@ -37,7 +37,29 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（43 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（51 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+
+## JIZURA 动态排版（`jizura.py`）
+
+![JIZURA 四套主题](docs/samples/jizura_themes.jpg)
+
+从上到下：叠字海报、清新抒情、动感卡点、日系文字PV（背景是我们自己的插画）。
+
+字幕参数里把「本地渲染引擎」选成 **JIZURA 动态排版**，就会用 [JIZURA](https://github.com/852wa/JIZURA)（MIT）渲染歌词：
+它有 600 多个部件（184 种版式、125 种入场、109 种出场、62 种文字处理、130 种装饰……），按随机种子编排，
+「换一种编排」就是换种子。源码原样放在 `third_party/jizura/src`（版本见 `UPSTREAM.md`），我们没有改它，在外面做了这些融合和优化：
+
+| 优化 | 说明 |
+|---|---|
+| 服务器端渲染 | 无头 Chromium 里逐帧调用 JIZURA 的 `Renderer.frame()` 画透明歌词层，ffmpeg 叠到我们的背景图上、合上音频；或直接出透明 .mov 给 ChatCut。一拍两（每秒 12 张）的主题只渲染不重复的画面，由 ffmpeg 补帧 |
+| 中文分镜 | JIZURA 按日文规则切分，会把中文拆在词中间（「笑｜靥」「咖｜啡」）。改为按词切：连续单字两两成词、「与／和」连接左右、助词语气词向前黏、落单的字向后黏，关键词不拆；多行换行和版式内部拆词也按词来。拿不准的句子可以在歌词里用 `/` 手动断开 |
+| 四套中文主题 | 从部件库挑出白名单：**叠字海报**（巨字 / 残影 / 描边回声做背景，前景字压在上面）、**清新抒情**（柔和入场出场、连续动作）、**动感卡点**（逐词砸屏）、**日系文字PV**（原汁原味）。默认关掉恐怖部件和「No.04」这类装饰编号 |
+| 跟背景对比 | 渲染前计算每张背景图的亮度，自动挑对比度够的配色；对比度不足 3 的镜头换成同一配色里对比度最高的方案 |
+| 本地字体 | 思源黑体 / 宋体、站酷三款、马善政从 Google Fonts 仓库下载到 `~/.cache/chatcut-studio/fonts`，渲染不依赖外网 |
+| 节拍 | 给了音频时用 JIZURA 自己的节拍分析，切镜头对齐鼓点 |
+| 我们的歌词语法 | `{关键词}` → JIZURA 的强调，`#chorus` → 副歌「重击」（闪光 + 震动，可关） |
+
+需要 `pip install playwright` 并 `playwright install chromium`（或系统已有 Chromium）。升级 JIZURA：覆盖 `third_party/jizura/src`，跑 `pytest chatcut_studio/tests/test_jizura.py`——白名单里的部件改了名会直接报出来。
 
 ## 闪光扫过（`lyrics.py`）
 
@@ -94,6 +116,8 @@ chatcut_studio/
   styles.py        风格库：上限 5 个、版本历史、恢复预设、安装
   optimize.py      AI 优化风格（按反馈生成修改建议）
   lyrics.py        歌词字幕渲染：LRC → ASS（含闪光扫过）→ ffmpeg
+  jizura.py        JIZURA 动态排版融合层：无头渲染、中文分镜、主题、对比度、字体
+  third_party/jizura/  JIZURA 源码（MIT，未改动）
   profile.py       风格档案结构 + SKILL.md 模板
   envcheck.py      Claude Code 方式的体检与安装
   fake_chatcut.py  本地假 ChatCut MCP 服务器
