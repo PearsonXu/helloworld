@@ -75,3 +75,29 @@ StyleProfile
 | 1 | 接入 lyric-mv：风格档案加 `lyrics` 字段，5 个内置风格映射到主题，界面加「用我的背景图生成样张」和「渲染 MV」 | 2–3 天 |
 | 2 | KTV 逐字：ASS 渲染、透明字幕层输出、支持逐字歌词格式；可选自动对齐和打点工具 | 2–3 天 |
 | 3 | 重效果风格（故障、卡点、3D、音频可视化）：评估 HyperFrames，出透明层交给 ChatCut | 1–2 周，可选 |
+
+## 补充：更多开源风格来源
+
+| 类别 | 项目 | 能提供的风格 | 许可 | 怎么用 |
+|---|---|---|---|---|
+| 歌词播放器 | [AMLL（类 Apple Music 歌词）](https://github.com/amll-dev/applemusic-like-lyrics) | 逐词渐亮、发光，非当前行虚化，弹簧滚动，流体背景；支持 LRC、YRC、QRC、TTML | npm 核心包标注 **AGPL-3.0** | 只借鉴效果，自己实现；配套的逐词歌词库（AMLL TTML DB）和逐词打轴工具（AMLL TTML Tool）可以参考 |
+| 歌词播放器 | [SPlayer](https://deepwiki.com/HHCL233/SPlayer/4-lyric-system) | 两套逐字歌词渲染；能读网易云 YRC、QQ 音乐 QRC 逐字歌词 | 未核实 | 参考逐字歌词的获取和解析 |
+| 歌词格式 | [Lyricify.Lyrics.Helper](https://www.nuget.org/packages/Lyricify.Lyrics.Helper) | 解析、生成 LRC、QRC、YRC 等逐字格式 | 未核实 | 逐字时间轴的格式转换 |
+| 特效字幕 | [Aegisub Karaoke Templater](https://aegisub.org/docs/latest/automation/karaoke_templater/) | 动漫式卡拉OK特效的模板语言 | 随 Aegisub（BSD） | 写好模板后批量生成 ASS |
+| 特效字幕 | TCAX 脚本合集（[GitHub aegisub 话题](https://www.github.com/topics/aegisub)） | 287 个特效字幕脚本 | 各脚本不同 | 当效果素材库挑选 |
+| 网页动画 | [GSAP 3.13+](https://gsap.com/blog/3-13/) | SplitText 拆字、ScrambleText 乱码解密、各种缓动 | 自有免费许可，可商用，但不能做竞品 | 给 HyperFrames 做动画 |
+| 网页动画 | [anime.js v4](https://www.mintlify.com/juliangarnier/anime/api/text-utils) | `text.split()` 按字、词、行拆分，做错落动画 | MIT | 同上 |
+| 网页组件 | [React Bits](https://github.com/0xyza/react-bits) | 110 多个组件，文字类有拆字、模糊聚焦、闪光扫过、乱码解密、故障等 | 需核实（各处标注不一） | 挑效果参考或移植 |
+| 网页组件 | [Magic UI](https://www.pkgpulse.com/guides/react-bits-vs-aceternity-magic-ui-2026) | 150 多个组件，含多种文字动画 | 开源，具体许可未核实 | 同上 |
+| 音频可视化 | [Butterchurn](https://github.com/jberg/butterchurn)（MilkDrop 的 WebGL 版） | 海量迷幻音频可视化预设 | MIT | 做「迷幻 / 电子」风格的动态背景 |
+| 音频可视化 | [Remotion 音频可视化](https://www.remotion.dev/docs/audio/visualization) | 频谱条、音波（audiogram 模板） | 受 Remotion 许可约束 | — |
+| 打轴工具 | [歌词滚动姬 lrc-maker](https://github.com/magic-akari/lrc-maker) | 网页里边听边按空格打时间轴，导出 LRC | MIT，约 780★ | **可以直接嵌进我们的界面** |
+
+由此可以再加入风格清单的：
+
+| # | 风格 | 效果 | 实现 |
+|---|---|---|---|
+| 10 | Apple Music 逐词发光 | 当前词逐渐亮起并发光，其他行虚化 | ASS（`\kf` + 发光层）近似实现；网页引擎可完整实现（自己实现，不用 AGPL 代码） |
+| 11 | 乱码解密 | 字符先乱跳再定格成歌词 | GSAP ScrambleText；ASS 可逐帧近似 |
+| 12 | 闪光扫过 | 一道高光从左扫到右 | lyric-mv 的 `sword` 强调；或 ASS `\clip` + `\t` |
+| 13 | 迷幻音频背景 | MilkDrop 预设随音乐变化，叠加歌词 | Butterchurn 渲染背景 + 任一字幕引擎 |
