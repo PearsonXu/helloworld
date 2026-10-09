@@ -64,7 +64,7 @@ THEMES: dict[str, dict] = {
         "koma": 0,
         "fx": {"chroma": 0.05, "texture": 0.3},
         "allow": {
-            "layout": ["center", "columnsBig", "halfVertical", "tyBaseline", "quote"],
+            "layout": ["cnPoem", "cnStagger", "cnFrame", "center", "columnsBig", "halfVertical", "tyBaseline", "quote"],
             "treat": ["none", "softShadow", "emphasisDots", "fadeChars"],
             "enter": ["fadeStagger", "blurStagger", "trackIn", "riseMask", "blur", "glint"],
             "hold": ["still", "drift", "breathe", "zoomSlow", "focusRack"],
@@ -80,7 +80,7 @@ THEMES: dict[str, dict] = {
         "koma": 0,
         "fx": {"chroma": 0.0, "texture": 0.4},
         "allow": {
-            "layout": ["columnsBig", "center", "halfVertical"],
+            "layout": ["cnPoem", "cnMoon", "cnFrame", "columnsBig", "center", "halfVertical"],
             "treat": ["none", "softShadow", "fadeChars"],
             "enter": ["inkBleed", "brushReveal", "strokeOrder", "inkDrop", "strokeDraw", "blur", "fadeStagger"],
             "hold": ["still", "drift", "breathe", "zoomSlow"],
@@ -96,7 +96,7 @@ THEMES: dict[str, dict] = {
         "koma": 12,
         "fx": {"chroma": 0.2, "texture": 0.3},
         "allow": {
-            "layout": ["kanjiFocus", "columnsBig", "center"],
+            "layout": ["cnEcho", "cnStagger", "cnFrame", "center"],
             "treat": ["none", "softShadow"],
             "enter": ["zoomOut", "trackIn", "riseMask", "slideL", "slideR"],
             "hold": ["still", "drift", "zoomSlow", "breathe"],
@@ -112,7 +112,7 @@ THEMES: dict[str, dict] = {
         "koma": 0,
         "fx": {"chroma": 0.05, "texture": 0.2},
         "allow": {
-            "layout": ["center", "halfVertical", "quote", "columnsBig"],
+            "layout": ["cnPoem", "cnMoon", "cnStagger", "center", "halfVertical", "quote", "columnsBig"],
             "treat": ["none", "softShadow", "glow", "fadeChars"],
             "enter": ["blur", "fadeStagger", "blurStagger", "backlight", "glint", "riseMask", "trackIn"],
             "hold": ["still", "drift", "float", "breathe", "glowFlicker"],
@@ -263,6 +263,141 @@ J.splitLines = (text, maxPer) => {
   const serif900 = Object.assign({}, Z.mincho_black), wenkai = { family: '"LXGW WenKai"', weight: 400, gf: null };
   Object.assign(Z, { dela: serif900, reggae: serif900, rampart: serif900, potta: Object.assign({}, Z.brush),
                      round: wenkai, pop: wenkai, kiwi: wenkai, klee: wenkai });
+})();
+// 新中式版式：用 JIZURA 已有的部件（竖排、印章、细线、残影、圆、版框）组合出来的 5 个版式，
+// 原则是一屏一个视觉焦点、留白多、装饰只用细线和小印章
+(() => {
+  const E = J.E, PK = 'cn';
+  const fo = (st, roles) => J.fontsOf(st, roles);
+  const strip = t => String(t || '').replace(/\s+/g, '');
+  const tin = (env, d = 0, len = 0.6) => E.outCubic(J.clamp((env.lt - d) / len));
+  const tout = env => 1 - E.inCubic(env.pOut);
+  const hair = env => Math.max(1, Math.min(env.W, env.H) * 0.0018);
+  const meas = (text, font, size, o) => J.measure(Object.assign({ text, font, size }, o || {}));
+  const SEAL_INK = '#F8F1E4';
+  const union = (a, b) => !a ? b : !b ? a : { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1),
+    cx: (Math.min(a.x0, b.x0) + Math.max(a.x1, b.x1)) / 2, cy: (Math.min(a.y0, b.y0) + Math.max(a.y1, b.y1)) / 2, boxes: [] };
+  const firstHan = t => [...t].find(c => J.isKanji(c) || /[㐀-鿿]/.test(c)) || [...t][0] || '';
+  // 朱砂小印：方形印底 + 反白字，盖下去时略微放大再落定
+  function seal(env, ch, x, y, s, a, font) {
+    if (a <= 0.01 || !ch) return;
+    const k = 1 + 0.25 * (1 - E.outBack(J.clamp(a), 2));
+    env.rect(x - s * k / 2, y - s * k / 2, s * k, s * k, env.sc.accent, a * 0.92, false);
+    env.draw({ text: ch, font, size: s * k * 0.66, x, y, color: SEAL_INK, alpha: a, ghost: false });
+  }
+  // 按词把一句分成 n 段（竖排分列 / 错落分组用）
+  const splitN = (text, n) => n <= 1 ? [text] : J.splitLines(text, Math.ceil([...text].length / n)).split('\n');
+  const reg = (key, def) => J.register('layout', key, Object.assign({ w: 1.6, portrait: 1.6, tags: ['calm', 'editorial'] }, def), PK);
+
+  /* 诗笺：竖排正文（多列从右往左）+ 一侧发丝线 + 列尾朱印 */
+  reg('cnPoem', {
+    name: '诗笺', fits: n => n >= 2 && n <= 16,
+    plan: (rng, cut, st) => ({ font: rng.pick(fo(st, ['display', 'serif'])), side: rng.pick([1, -1]), y: rng.range(0.4, 0.46), seal: rng.chance(0.75) }),
+    render(env) {
+      const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text), n = [...text].length;
+      const cols = splitN(text, n > 14 ? 3 : n > 7 ? 2 : 1), per = Math.max(...cols.map(c => [...c].length));
+      const size = Math.min(H * 0.5 / per, W * (cols.length > 1 ? 0.12 : 0.15));
+      const gap = size * 1.55, cx = W * (0.5 + P.side * 0.1), cy = H * P.y, colH = per * size * 1.04;
+      let bb = null;
+      cols.forEach((c, i) => {   // 第一列在最右
+        const x = cx + ((cols.length - 1) / 2 - i) * gap;
+        const top = cy - colH / 2, h = [...c].length * size * 1.04;
+        bb = union(bb, J.mainDraw(env, { text: c, font: P.font, size, x, y: top + h / 2, vertical: true, track: 0.04, color: sc.fg, mi: i * 3 }));
+      });
+      const e = tin(env, 0.1, 0.9) * tout(env);
+      const lx = cx - P.side * ((cols.length - 1) / 2 * gap + size * 0.95), y0 = cy - colH / 2 - size * 0.4;
+      env.line([[lx, y0], [lx, y0 + (colH + size * 1.4) * e]], sc.sub, hair(env), 0.55, false);
+      if (P.seal) seal(env, firstHan(text), cx - P.side * ((cols.length - 1) / 2 * gap) , cy + colH / 2 + size * 0.75, size * 0.48, tin(env, 0.45, 0.35) * tout(env), P.font);
+      return bb;
+    },
+  });
+
+  /* 错落：第一个词放大、靠左，其余小字右对齐落在下方，中间一条朱色短线相连 */
+  reg('cnStagger', {
+    name: '错落', fits: n => n >= 3 && n <= 14,
+    plan: (rng, cut, st) => ({ big: rng.pick(fo(st, ['display'])), small: rng.pick(fo(st, ['serif', 'body'])), y: rng.range(0.38, 0.5), flip: rng.chance(0.35) }),
+    render(env) {
+      const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text);
+      let units = J.chunkText(text).map(strip).filter(Boolean);
+      if (units.length < 2) { const a = [...text]; const k = Math.ceil(a.length / 2); units = [a.slice(0, k).join(''), a.slice(k).join('')]; }
+      const head = units[0], rest = units.slice(1).join('');
+      const bs = Math.min(W * 0.8 / [...head].length, W * 0.3), ss = Math.min(bs * 0.36, W * 0.82 / Math.max(1, [...rest].length) / 1.2);
+      const bw = meas(head, P.big, bs).w, sw = meas(rest, P.small, ss, { track: 0.18 }).w;
+      const L = W * 0.1, R = W * 0.9, by = H * P.y, sy = by + bs * 0.78;
+      const bx = P.flip ? R - bw / 2 : L + bw / 2, sx = P.flip ? L + sw / 2 : R - sw / 2;
+      let bb = J.mainDraw(env, { text: head, font: P.big, size: bs, x: bx, y: by, color: sc.fg, mi: 0 });
+      bb = union(bb, J.mainDraw(env, { text: rest, font: P.small, size: ss, x: sx, y: sy, track: 0.18, color: sc.fg, mi: 4 }));
+      const e = tin(env, 0.25, 0.7) * tout(env);
+      const a0 = P.flip ? sx + sw / 2 + ss * 0.6 : sx - sw / 2 - ss * 0.6, a1 = P.flip ? R - bw * 0.15 : L + bw * 0.15;
+      env.line([[a0, sy], [J.lerp(a0, a1, e), sy]], sc.accent, Math.max(2, ss * 0.06), 0.9, false);
+      return bb;
+    },
+  });
+
+  /* 叠影：同一句放大成淡淡的底纹，正文压在它的下半部分；底纹随时间极慢放大 */
+  reg('cnEcho', {
+    name: '叠影', fits: n => n >= 2 && n <= 12, emph: 1.4,
+    plan: (rng, cut, st) => ({ font: rng.pick(fo(st, ['display'])), up: rng.pick([1, -1]) }),
+    render(env) {
+      const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text), n = [...text].length;
+      const back = n > 6 ? J.splitLines(text, Math.ceil(n / 2)) : text;
+      const es = J.fitSize(back, P.font, W * 0.94, H * 0.36, { lead: 1.05 }) * (1 + 0.04 * J.clamp(env.lt / Math.max(0.5, env.cut.dur)));
+      const front = n > 7 ? J.splitLines(text, Math.ceil(n / 2)) : text;
+      const fs = Math.min(es * 0.42, J.fitSize(front, P.font, W * 0.7, H * 0.2, { track: 0.08, lead: 1.25 }));
+      const cy = H * 0.45, ea = tin(env, 0, 1.0) * tout(env);
+      const bi = { text: back, font: P.font, size: es, x: W / 2, y: cy - P.up * es * 0.18, lead: 1.05, alpha: 0.3 * ea, color: sc.accent, ghost: false };
+      env.draw(bi);
+      const bb = J.mainDraw(env, { text: front, font: P.font, size: fs, x: W / 2, y: cy + P.up * es * 0.32, track: 0.08, lead: 1.25, color: sc.fg });
+      if (bb) { const e = tin(env, 0.3, 0.6) * tout(env), y = bb.y1 + fs * 0.45;
+        env.line([[W / 2 - (bb.x1 - bb.x0) * 0.2 * e, y], [W / 2 + (bb.x1 - bb.x0) * 0.2 * e, y]], sc.accent, Math.max(2, fs * 0.05), 0.9, false); }
+      return bb;
+    },
+  });
+
+  /* 窗格：古籍版框式的双线框，四边从角上画出来；正文居中，右下角压一方小印 */
+  reg('cnFrame', {
+    name: '窗格', fits: n => n >= 2 && n <= 14,
+    plan: (rng, cut, st) => ({ font: rng.pick(fo(st, ['serif', 'display'])), vertical: rng.chance(0.4), y: rng.range(0.4, 0.48), seal: rng.chance(0.7) }),
+    render(env) {
+      const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text), n = [...text].length;
+      const vert = P.vertical && n <= 8;
+      const t = vert ? text : (n > 6 ? J.splitLines(text, Math.ceil(n / 2)) : text);
+      const size = vert ? Math.min(H * 0.36 / n, W * 0.11) : Math.min(J.fitSize(t, P.font, W * 0.56, H * 0.2, { track: 0.1, lead: 1.35 }), W * 0.11);
+      const m = vert ? { w: size, h: n * size * 1.04 } : meas(t, P.font, size, { track: 0.1, lead: 1.35 });
+      const cx = W / 2, cy = H * P.y, pad = size * 0.9;
+      const x0 = Math.max(W * 0.07, cx - m.w / 2 - pad), x1 = Math.min(W * 0.93, cx + m.w / 2 + pad), y0 = cy - m.h / 2 - pad, y1 = cy + m.h / 2 + pad;
+      const e = E.inOutCubic(J.clamp(env.lt / 0.9)) * tout(env), lw = hair(env), g = size * 0.18;
+      const frame = (ax0, ay0, ax1, ay1, w, a) => {
+        const hx = (ax1 - ax0) * e, vy = (ay1 - ay0) * e;
+        env.line([[ax0, ay0], [ax0 + hx, ay0]], sc.sub, w, a, false); env.line([[ax1, ay1], [ax1 - hx, ay1]], sc.sub, w, a, false);
+        env.line([[ax1, ay0], [ax1, ay0 + vy]], sc.sub, w, a, false); env.line([[ax0, ay1], [ax0, ay1 - vy]], sc.sub, w, a, false);
+      };
+      frame(x0, y0, x1, y1, lw * 2.2, 0.75); frame(x0 + g, y0 + g, x1 - g, y1 - g, lw, 0.5);
+      const bb = J.mainDraw(env, { text: t, font: P.font, size, x: cx, y: cy, vertical: vert, track: vert ? 0.04 : 0.1, lead: 1.35, color: sc.fg });
+      if (P.seal) seal(env, firstHan(text), x1, y1, size * 0.5, tin(env, 0.7, 0.35) * tout(env), P.font);
+      return bb;
+    },
+  });
+
+  /* 月轮：一轮淡淡的圆（月 / 日），竖排正文贴着圆的一侧，或横排落在圆下 */
+  reg('cnMoon', {
+    name: '月轮', fits: n => n >= 2 && n <= 12,
+    plan: (rng, cut, st) => ({ font: rng.pick(fo(st, ['display', 'serif'])), mode: rng.pick(['v', 'v', 'h']), side: rng.pick([1, -1]), ring: rng.chance(0.5) }),
+    render(env) {
+      const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text), n = [...text].length;
+      const R = W * 0.27, mx = W / 2 + (P.mode === 'v' ? -P.side * W * 0.1 : 0), my = H * 0.36;
+      const e = tin(env, 0, 1.2) * tout(env);
+      env.circle(mx, my, R * (0.96 + 0.04 * e), sc.fg, null, 0, 0.09 * e, false);
+      if (P.ring) env.arc(mx, my, R * 1.08, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * E.inOutCubic(J.clamp(env.lt / 1.4)), sc.sub, hair(env), 0.55 * tout(env), false);
+      if (P.mode === 'v' && n <= 9) {
+        const size = Math.min(H * 0.46 / n, W * 0.14), h = n * size * 1.04;
+        return J.mainDraw(env, { text, font: P.font, size, x: mx + P.side * R * 1.05, y: my + R * 0.35 + h * 0.15, vertical: true, track: 0.04, color: sc.fg });
+      }
+      const t = n > 7 ? J.splitLines(text, Math.ceil(n / 2)) : text;
+      const size = Math.min(J.fitSize(t, P.font, W * 0.7, H * 0.16, { track: 0.1, lead: 1.3 }), W * 0.12);
+      return J.mainDraw(env, { text: t, font: P.font, size, x: W / 2, y: my + R * 1.55, track: 0.1, lead: 1.3, color: sc.fg });
+    },
+  });
 })();
 // 配色：中国传统色。每套两种方案：浅字（暗背景）和深字（亮背景），由对比度自动选择
 const hex2 = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));

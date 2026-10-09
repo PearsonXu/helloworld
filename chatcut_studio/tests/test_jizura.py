@@ -43,9 +43,12 @@ def test_vendored_source_and_license():
 
 def test_chinese_themes():
     assert Jizura(theme="叠字海报").theme == "叠字国潮" and Jizura(theme="日系文字PV").theme == "宋韵留白"  # 旧名兼容
+    js = jizura.HARNESS_JS
     for name, t in jizura.THEMES.items():
         assert all(p.startswith("cn_") for p in t["palettes"]), name
-    js = jizura.HARNESS_JS
+    assert "columnsBig" not in jizura.THEMES["叠字国潮"]["allow"]["layout"]      # 大字居中已去掉
+    for key in ("cnPoem", "cnStagger", "cnEcho", "cnFrame", "cnMoon"):           # 我们新加的中式版式
+        assert f"reg('{key}'" in js and any(key in t["allow"]["layout"] for t in jizura.THEMES.values())
     for face in ("dela", "reggae", "potta", "round", "pop", "kiwi", "klee"):  # 卡通 / 日文字体都换成宋、楷、书法
         assert face + ":" in js.replace(" ", "")
 
