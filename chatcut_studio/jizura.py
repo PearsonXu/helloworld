@@ -7,8 +7,9 @@ JIZURA（https://github.com/852wa/JIZURA ，MIT）是浏览器里的歌词 PV �
    PNG 流交给 ffmpeg，叠到我们的背景图上、合上音频，或直接输出透明 .mov 给 ChatCut。
 2. 中文：JIZURA 的分镜器按日文规则写，会把中文拆在词中间（「笑|靥」）。我们先用浏览器自带的中文分词，
    按「单字修饰词向后黏、助词语气词向前黏」切好，用 JIZURA 的手动分镜语法（a/b/c）交给它。
-3. 主题：从 JIZURA 部件库里挑选组合成 4 套适合中文歌的主题（叠字海报、清新抒情、动感卡点、日系文字PV），
+3. 主题：从 JIZURA 部件库里挑选组合成 4 套中文主题（宋韵留白、水墨书法、叠字国潮、清新诗意），
    默认关掉恐怖部件和「No.04 / 00:12.34」这类装饰性编号。
+5. 中文审美：注册 5 套中国传统色配色，把卡通字体换成宋体 / 文楷 / 毛笔，部件只留符合中文排版的。
 4. 字体：简体中文用到的字体（思源黑体 / 宋体、站酷三款、马善政）放在本地，不依赖 Google Fonts。
 """
 from __future__ import annotations
@@ -38,11 +39,14 @@ FONTS = [
     ("ZCOOL KuaiLe", "ZCOOLKuaiLe-Regular.ttf", "400", f"{GF}/zcoolkuaile/ZCOOLKuaiLe-Regular.ttf"),
     ("ZCOOL XiaoWei", "ZCOOLXiaoWei-Regular.ttf", "400", f"{GF}/zcoolxiaowei/ZCOOLXiaoWei-Regular.ttf"),
     ("Ma Shan Zheng", "MaShanZheng-Regular.ttf", "400", f"{GF}/mashanzheng/MaShanZheng-Regular.ttf"),
+    ("LXGW WenKai", "LXGWWenKai-Regular.ttf", "400",
+     "https://github.com/lxgw/LxgwWenKai/releases/latest/download/LXGWWenKai-Regular.ttf"),
     ("IBM Plex Mono", "IBMPlexMono-Medium.ttf", "500", f"{GF}/ibmplexmono/IBMPlexMono-Medium.ttf"),
 ]
 
-# JIZURA 的 27 套配色（原名是日文）
-PALETTES = {
+# 中国传统色配色（我们注册进 JIZURA 的，见 HARNESS_JS 里的 CN_STYLES）+ JIZURA 自带的 27 套（原名是日文）
+CN_PALETTES = {"cn_ink": "墨与朱砂", "cn_gold": "夜色鎏金", "cn_qinglv": "青绿山水", "cn_moon": "月白黛蓝", "cn_rouge": "胭脂"}
+PALETTES = {**CN_PALETTES,
     "noir": "黑色色偏", "crimson": "深红信号", "caution": "警示黄", "magenta": "波普洋红", "paper": "纸与墨",
     "hud": "暗色 HUD", "mint": "薄荷终端", "specimen": "字体样本", "transit": "交通标识", "blueprint": "蓝图",
     "rouge": "胭脂渐变", "mono": "单色 RGB", "sakura": "樱花", "ocean": "深海", "sunset": "晚霞渐变",
@@ -51,65 +55,77 @@ PALETTES = {
     "hrRuin": "废墟（恐怖）", "hrNightRec": "深夜录像（恐怖）", "hrCurse": "诅咒信（恐怖）",
 }
 
-# 我们的四套主题：从 JIZURA 部件库里挑出来的白名单（键名以 * 结尾表示前缀匹配），配色候选和整体参数
+# 四套中文主题：只用中国传统色配色和雅致的中文字体，部件只留符合中文排版的（竖排、大小字错落、一字强调、
+# 留白、印章、水印大字、墨迹晕开……），去掉票根、邮票、HUD、英文标签、卡通字体这类日式 / 西式元素
 THEMES: dict[str, dict] = {
-    "叠字海报": {
-        "desc": "同一句歌词放大成描边 / 残影 / 出框巨字做背景，前景字重叠压在上面，色彩对比强",
-        "palettes": ["mono", "noir", "sunset", "ocean", "gold", "synth80"],
-        "koma": 12,
-        "fx": {"chroma": 0.35, "texture": 0.4},
+    "宋韵留白": {
+        "desc": "宋体大小字错落、大面积留白、竖排小字与朱砂印章点缀，安静克制",
+        "palettes": ["cn_ink", "cn_moon", "cn_gold"],
+        "koma": 0,
+        "fx": {"chroma": 0.05, "texture": 0.3},
         "allow": {
-            "layout": ["huge", "stack", "depthStack", "tyCropGiant", "tyKeySplit", "zoomRepeat", "columnsBig",
-                       "kanjiFocus", "poster", "halftoneBig", "sliceStack", "mixed", "center"],
-            "treat": ["echoOutline", "shadowStack", "outline", "doubleOutline", "outlineOffset", "longShadow",
-                      "hardShadow", "none"],
-            "enter": ["zoomOut", "echoIn", "trackIn", "slideL", "slideR", "riseMask", "stretch", "assemble",
-                      "knWordSlam", "blurStagger"],
-            "hold": ["still", "drift", "zoomSlow", "echoTrail", "trackBreathe", "breathe"],
-            "exit": ["cut", "trackOutWide", "echoOut", "blur", "zoomThrough", "zoomFar", "slideOutL", "slideOutR", "riseOut"],
-            "decor": ["brackets", "cropMarks", "guides", "watermarkKanji", "lineBurst", "slash"],
-            "cam": ["push", "pullOut", "dollyIn", "stepZoom", "beatPunch", "driftDiag"],
-            "trans": ["pushSlide", "zoomThrough", "wipe"],
+            "layout": ["center", "columnsBig", "kanjiFocus", "halfVertical", "vcols", "tyBaseline", "quote",
+                       "tyCropGiant"],
+            "treat": ["none", "softShadow", "emphasisDots", "fadeChars", "echoOutline"],
+            "enter": ["fadeStagger", "blurStagger", "trackIn", "riseMask", "blur", "glint"],
+            "hold": ["still", "drift", "breathe", "zoomSlow", "focusRack"],
+            "exit": ["blur", "drift", "blurOutStagger", "dissolve", "trackOutWide", "riseOut"],
+            "decor": ["seal", "verticalStrip", "watermarkKanji"],
+            "cam": ["push", "dollyIn", "focusIn", "pullOut"],
+            "trans": ["pushSlide", "uncover"],
         },
     },
-    "清新抒情": {
-        "desc": "安静、留白、柔和的入场和出场，适合抒情慢歌",
-        "palettes": ["ocean", "sakura", "sumi", "gold", "paper", "specimen"],
-        "koma": 0,  # 不做一拍两的顿挫感，动作连续
-        "fx": {"chroma": 0.1, "texture": 0.3},
+    "水墨书法": {
+        "desc": "毛笔字竖排、墨迹晕开与笔画书写入场、印章落款，水墨意境",
+        "palettes": ["cn_ink", "cn_qinglv"],
+        "koma": 0,
+        "fx": {"chroma": 0.0, "texture": 0.4},
         "allow": {
-            "layout": ["center", "vcols", "credits", "quote", "lowerThird", "halfVertical", "tyRuby",
-                       "kanjiFocus", "columnsBig", "tyBaseline", "depthStack"],
-            "treat": ["none", "softShadow", "glow", "fadeChars", "focusPull", "emphasisDots", "underline", "echoOutline"],
-            "enter": ["blur", "blurStagger", "fadeStagger", "trackIn", "riseMask", "inkBleed", "brushReveal",
-                      "backlight", "glint", "strokeOrder", "lightLeak"],
-            "hold": ["still", "drift", "breathe", "float", "zoomSlow", "glowFlicker", "focusRack", "shimmer"],
-            "exit": ["blur", "drift", "blurOutStagger", "dissolve", "sinkMask", "riseOut", "trackOutWide", "hazeOut"],
-            "decor": ["petals", "fireflies", "starField", "bokeh", "twinkle", "moonPhases", "snow"],
-            "cam": ["push", "focusIn", "floatNoise", "driftDiag", "dollyIn", "pullOut"],
+            "layout": ["vcols", "kanjiFocus", "columnsBig", "center", "halfVertical", "kakejiku", "hanko"],
+            "treat": ["none", "softShadow", "fadeChars"],
+            "enter": ["inkBleed", "brushReveal", "strokeOrder", "inkDrop", "strokeDraw", "blur", "fadeStagger"],
+            "hold": ["still", "drift", "breathe", "zoomSlow"],
+            "exit": ["dissolve", "drift", "blurOutStagger", "undraw", "blur"],
+            "decor": ["brushStroke", "seal", "watermarkKanji"],
+            "cam": ["push", "dollyIn", "pullOut", "driftDiag"],
+            "trans": ["inkBlob", "pushSlide"],
+        },
+    },
+    "叠字国潮": {
+        "desc": "宋体巨字、残影、描边回声做背景，前景字压在上面；鎏金 / 胭脂 / 朱砂配色，新中式海报感",
+        "palettes": ["cn_gold", "cn_rouge", "cn_ink"],
+        "koma": 12,
+        "fx": {"chroma": 0.2, "texture": 0.3},
+        "allow": {
+            "layout": ["tyCropGiant", "kanjiFocus", "columnsBig", "tyKeySplit", "zoomRepeat", "center"],
+            "treat": ["echoOutline", "shadowStack", "doubleOutline", "outlineOffset", "longShadow", "none"],
+            "enter": ["zoomOut", "echoIn", "trackIn", "riseMask", "stretch", "slideL", "slideR", "stamp"],
+            "hold": ["still", "drift", "zoomSlow", "echoTrail", "breathe"],
+            "exit": ["cut", "echoOut", "trackOutWide", "zoomThrough", "zoomFar", "blur"],
+            "decor": ["seal", "watermarkKanji", "brushStroke"],
+            "cam": ["push", "pullOut", "dollyIn", "stepZoom", "beatPunch"],
+            "trans": ["pushSlide", "zoomThrough"],
+        },
+    },
+    "清新诗意": {
+        "desc": "文楷手写感、柔光与花瓣萤火点缀，像一首小诗，适合清新抒情歌",
+        "palettes": ["cn_moon", "cn_qinglv", "cn_rouge"],
+        "koma": 0,
+        "fx": {"chroma": 0.05, "texture": 0.2},
+        "allow": {
+            "layout": ["center", "vcols", "halfVertical", "quote", "columnsBig", "kanjiFocus"],
+            "treat": ["none", "softShadow", "glow", "fadeChars"],
+            "enter": ["blur", "fadeStagger", "blurStagger", "backlight", "glint", "riseMask", "trackIn"],
+            "hold": ["still", "drift", "float", "breathe", "glowFlicker"],
+            "exit": ["blur", "drift", "blurOutStagger", "dissolve", "hazeOut", "riseOut"],
+            "decor": ["petals", "fireflies", "starField", "moonPhases", "twinkle", "bokeh"],
+            "cam": ["push", "floatNoise", "focusIn", "driftDiag"],
             "trans": ["irisOpen", "pushSlide", "uncover"],
         },
     },
-    "动感卡点": {
-        "desc": "逐词砸屏、跟着鼓点切换，快节奏",
-        "palettes": ["caution", "crimson", "magenta", "synth80", "acid", "blueprint"],
-        "koma": 12,
-        "fx": {"chroma": 0.6, "texture": 0.5},
-        "allow": {
-            "layout": ["kn*", "ty*", "huge", "stack", "zoomRepeat", "burst", "slotMachine", "flipBoard", "crossBands"],
-            "enter": ["kn*", "ty*", "zoomOut", "slideL", "slideR", "stretch", "glitchIn", "whip", "bounceBig", "stamp"],
-            "exit": ["kn*", "ty*", "cut", "explode", "slice", "glitch", "zoomThrough", "whipOut", "shatterLite"],
-            "cam": ["kn*", "beatPunch", "crashZoom", "snapPan", "whipIn", "stepZoom", "shakeHard"],
-        },
-    },
-    "日系文字PV": {
-        "desc": "JIZURA 原汁原味：全部部件随机组合（不含恐怖部件）",
-        "palettes": ["noir", "paper", "hud", "specimen", "blueprint", "rouge"],
-        "koma": 12,
-        "fx": {},
-        "allow": {},
-    },
 }
+# 旧版本存下来的主题名 → 新主题
+THEME_ALIASES = {"叠字海报": "叠字国潮", "清新抒情": "清新诗意", "动感卡点": "叠字国潮", "日系文字PV": "宋韵留白"}
 
 # 在 JIZURA 之后加载的我们自己的脚本：中文分镜、按主题组装项目、逐帧输出
 HARNESS_JS = r"""
@@ -241,6 +257,43 @@ J.splitLines = (text, maxPer) => {
   return out.join('\n');
 };
 
+/* ---------- 中文审美层 ---------- */
+// 字体：中文版原本把日文展示字体映射成站酷快乐体 / 庆科黄油体这类卡通字体，统一换成雅致的中文字体
+(() => {
+  const Z = J.LANG_FACES['zh-Hans'].map;
+  const serif900 = Object.assign({}, Z.mincho_black), wenkai = { family: '"LXGW WenKai"', weight: 400, gf: null };
+  Object.assign(Z, { dela: serif900, reggae: serif900, rampart: serif900, potta: Object.assign({}, Z.brush),
+                     round: wenkai, pop: wenkai, kiwi: wenkai, klee: wenkai });
+})();
+// 配色：中国传统色。每套两种方案：浅字（暗背景）和深字（亮背景），由对比度自动选择
+const hex2 = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mixHex = (a, b, k) => '#' + hex2(a).map((v, i) => Math.round(v * (1 - k) + hex2(b)[i] * k).toString(16).padStart(2, '0')).join('').toUpperCase();
+// 背景巨字、残影用的「暗色」：在文字色和底色之间取一个淡的中间色（原值是给 JIZURA 自己的底色设计的，压在我们的图上会成黑块）
+const S = (bg, fg, sub, accent, accent2, dim, ghostA, ghostB) => ({ bg, fg, sub, accent, accent2, ink: fg,
+  dim: mixHex(bg, fg, 0.28), ghostA: mixHex(bg, fg, 0.45), ghostB });
+const CN_STYLES = {
+  cn_ink:    { name: '墨与朱砂', fonts: { display: ['mincho_black', 'brush'], serif: ['mincho_bold', 'mincho_black'], body: ['mincho'], mono: ['mono'] },
+               schemes: [S('#15120F', '#F3EDE0', '#B9B0A0', '#C8372D', '#F3EDE0', '#2A2520', '#8C857A', '#C8372D'),
+                         S('#EFE6D2', '#1E1A16', '#5E574C', '#B8322A', '#1E1A16', '#E2D7BF', '#9A9284', '#B8322A')] },
+  cn_gold:   { name: '夜色鎏金', fonts: { display: ['mincho_black'], serif: ['mincho_bold'], body: ['mincho_light'], mono: ['mono'] },
+               schemes: [S('#14100B', '#F6EBD3', '#C8B48A', '#D4A853', '#F6EBD3', '#2A2216', '#8A7550', '#D4A853'),
+                         S('#F3E9D2', '#2B2216', '#6B5A3E', '#A67C2E', '#2B2216', '#E6D9BC', '#B39B6E', '#A67C2E')] },
+  cn_qinglv: { name: '青绿山水', fonts: { display: ['brush', 'mincho_black'], serif: ['mincho_bold'], body: ['klee'], mono: ['mono'] },
+               schemes: [S('#0F1C1C', '#EEF2E8', '#A9C1B5', '#6DB596', '#8EC0D2', '#1A2C2B', '#4E7F73', '#8EC0D2'),
+                         S('#EEF0E6', '#1F3B3A', '#4F6B66', '#2E7D6B', '#2E6E8E', '#DDE3D6', '#8FB0A4', '#2E6E8E')] },
+  cn_moon:   { name: '月白黛蓝', fonts: { display: ['klee', 'mincho_bold'], serif: ['mincho'], body: ['klee'], mono: ['mono'] },
+               schemes: [S('#101722', '#EAF0F5', '#A9B8C8', '#9CC3D5', '#EAF0F5', '#1B2433', '#5B708A', '#9CC3D5'),
+                         S('#EEF2F5', '#26324A', '#5A6680', '#4A6E98', '#26324A', '#DDE4EB', '#9AA8BC', '#4A6E98')] },
+  cn_rouge:  { name: '胭脂', fonts: { display: ['mincho_black', 'klee'], serif: ['mincho_bold'], body: ['mincho'], mono: ['mono'] },
+               schemes: [S('#170D10', '#FBF0EE', '#D9B8B6', '#E2677A', '#F3C9A8', '#2A1519', '#8E4B57', '#E2677A'),
+                         S('#F8ECEA', '#3A1A20', '#7A4E55', '#9D2933', '#3A1A20', '#EEDAD6', '#C79AA0', '#9D2933')] },
+};
+for (const [k, v] of Object.entries(CN_STYLES)) {
+  const base = JSON.parse(JSON.stringify(J.STYLES.sumi));          // 结构（偏好权重、纹理……）沿用「墨と朱」
+  J.STYLES[k] = Object.assign(base, v, { desc: v.name, hud: false, glow: 0.25,
+    decor: { seal: 1.4, watermarkKanji: 1.4, brushStroke: 1.2, verticalStrip: 1.0, petals: 0.8, fireflies: 0.8, starField: 0.6, moonPhases: 0.6 } });
+}
+
 /* 对比度：我们的歌词层是叠在自己的背景图上的，JIZURA 不知道底下有多亮。
    按每段背景的亮度挑配色，并把对比度不够的镜头换成同一配色里对比度最高的方案。 */
 const relLum = hex => {
@@ -287,6 +340,11 @@ window.CS = {
       const bin = Uint8Array.from(atob(a.audio), c => c.charCodeAt(0));
       const r = await J.analyzeAudio(new Blob([bin]));
       audio = { beats: r.beats, duration: r.duration, energy: r.energy, energyRate: r.energyRate, bpm: r.bpm };
+    }
+    // 背景巨字 / 残影的颜色按我们背景图的平均色来混，和画面同色调
+    if (a.bgColor && J.STYLES[p.style] && CN_STYLES[p.style]) {
+      J.STYLES[p.style].schemes = CN_STYLES[p.style].schemes.map(s => Object.assign({}, s, {
+        bg: mixHex(s.bg, a.bgColor, 0.9), dim: mixHex(a.bgColor, s.fg, 0.20), ghostA: mixHex(a.bgColor, s.fg, 0.50) }));
     }
     window.PROJ = p;
     window.PLAN = J.plan(p, audio);
@@ -351,6 +409,21 @@ def harness() -> Path:
     return page
 
 
+def mean_color(imgs: list[Path]) -> str:
+    """几张背景图中间区域的平均颜色（十六进制），没有图时按深蓝夜色处理。"""
+    import numpy as np
+    from PIL import Image
+
+    if not imgs:
+        return "#1D2B44"
+    cols = []
+    for img in imgs:
+        im = Image.open(img).convert("RGB")
+        w, h = im.size
+        cols.append(np.asarray(im.crop((int(w * 0.1), int(h * 0.2), int(w * 0.9), int(h * 0.8))).resize((32, 48)), float).mean(axis=(0, 1)))
+    return "#" + "".join(f"{int(round(v)):02X}" for v in np.mean(cols, axis=0))
+
+
 def luminance(img: Path) -> float:
     """背景图中间区域（歌词通常所在的位置）的平均相对亮度 0–1。"""
     import numpy as np
@@ -365,7 +438,7 @@ def luminance(img: Path) -> float:
 
 def project_args(lines: list[Line], cfg: Jizura, scale: float, fps: int, audio: Path | None,
                  backgrounds: list[Path] | None = None) -> dict:
-    theme = THEMES[cfg.theme]
+    theme = THEMES[THEME_ALIASES.get(cfg.theme, cfg.theme)]
     palette = cfg.palette if cfg.palette in PALETTES else "auto"
     bgs = backgrounds or []
     # 没有背景图（例如只出透明字幕层）时按深色背景处理
@@ -376,7 +449,7 @@ def project_args(lines: list[Line], cfg: Jizura, scale: float, fps: int, audio: 
     return {
         "lines": [{"start": ln.start, "raw": ln.raw, "chorus": ln.chorus} for ln in lines],
         "chorusHit": cfg.chorus_hit, "aspect": "9:16", "res": 1080, "fps": fps, "palette": palette,
-        "palettes": theme["palettes"], "bgLums": bg_lums,
+        "palettes": theme["palettes"], "bgLums": bg_lums, "bgColor": mean_color(bgs),
         "seed": cfg.seed, "fx": fx, "allow": theme["allow"], "scale": scale, "unify": theme.get("unify", True),
         "audio": base64.b64encode(audio.read_bytes()).decode() if audio else None,
     }
@@ -430,7 +503,7 @@ async def render(lines: list[Line], cfg: Jizura, out: Path, backgrounds: list[Pa
         info = await page.evaluate("a => CS.setup(a)", project_args(lines, cfg, scale, fps, audio, backgrounds))
         w, h = round(info["W"] * scale) // 2 * 2, round(info["H"] * scale) // 2 * 2
         duration = info["duration"]
-        koma = THEMES[cfg.theme]["koma"]
+        koma = THEMES[THEME_ALIASES.get(cfg.theme, cfg.theme)]["koma"]
         step = 1 / koma if koma > 0 else 1 / fps  # 一拍两（每秒 12 张）时只渲染不重复的画面，由 ffmpeg 补帧
         times = [i * step for i in range(math.ceil(duration / step))]
         cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",

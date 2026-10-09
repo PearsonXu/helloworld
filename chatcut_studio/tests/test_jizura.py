@@ -41,9 +41,18 @@ def test_vendored_source_and_license():
     assert len(list(jizura.SRC_DIR.glob("*.js"))) > 30
 
 
+def test_chinese_themes():
+    assert Jizura(theme="叠字海报").theme == "叠字国潮" and Jizura(theme="日系文字PV").theme == "宋韵留白"  # 旧名兼容
+    for name, t in jizura.THEMES.items():
+        assert all(p.startswith("cn_") for p in t["palettes"]), name
+    js = jizura.HARNESS_JS
+    for face in ("dela", "reggae", "potta", "round", "pop", "kiwi", "klee"):  # 卡通 / 日文字体都换成宋、楷、书法
+        assert face + ":" in js.replace(" ", "")
+
+
 def test_skill_md_mentions_overlay():
     md = render_skill_md(PRESETS["cinematic-minimal"], "cinematic-minimal")
-    assert "JIZURA「叠字海报」" in md and "透明歌词层" in md and "不要用 ChatCut 自带字幕" in md
+    assert "JIZURA「宋韵留白」" in md and "透明歌词层" in md and "不要用 ChatCut 自带字幕" in md
 
 
 @needs_browser
@@ -108,11 +117,11 @@ def test_contrast_follows_background():
 def test_render_video_and_overlay(tmp_path):
     lines = lyrics.sample_lines("巷口{灯光}忽明忽灭\n你看啊仲夏的{弯月} #chorus", 3)
     bgs = sorted(BG_DIR.glob("*.jpg"))[:2]
-    out, info = asyncio.run(jizura.render(lines, Jizura(theme="叠字海报", seed=4), tmp_path / "v", bgs, None, 0.25))
+    out, info = asyncio.run(jizura.render(lines, Jizura(theme="叠字国潮", seed=4), tmp_path / "v", bgs, None, 0.25))
     assert out.suffix == ".mp4" and out.stat().st_size > 10_000 and not info.get("warnings")
     assert info["frames"] == pytest.approx(info["duration"] * 12, abs=2)  # 一拍两：每秒只渲染 12 张不重复的画面
     assert json.loads(out.with_suffix(".plan.json").read_text())["cuts"]
-    mov, _ = asyncio.run(jizura.render(lines[:1], Jizura(theme="清新抒情"), tmp_path / "o", None, None, 0.2, overlay=True))
+    mov, _ = asyncio.run(jizura.render(lines[:1], Jizura(theme="清新诗意"), tmp_path / "o", None, None, 0.2, overlay=True))
     fmt = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=pix_fmt", "-of", "csv=p=0", str(mov)],
                          capture_output=True, text=True).stdout
     assert mov.suffix == ".mov" and "yuva" in fmt
@@ -123,7 +132,7 @@ def test_render_video_and_overlay(tmp_path):
 def test_preview_api_jizura():
     c = TestClient(create_app())
     meta = c.get("/api/jizura/meta").json()
-    assert [t["name"] for t in meta["themes"]] == ["叠字海报", "清新抒情", "动感卡点", "日系文字PV"]
+    assert [t["name"] for t in meta["themes"]] == ["宋韵留白", "水墨书法", "叠字国潮", "清新诗意"]
     assert not any(p["key"].startswith("hr") for p in meta["palettes"])
     profile = PRESETS["cinematic-minimal"].model_dump()
     bg = c.get("/api/lyrics/backgrounds").json()["backgrounds"][0]

@@ -9,7 +9,7 @@ import re
 import unicodedata
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Pacing(BaseModel):
@@ -21,7 +21,7 @@ class Pacing(BaseModel):
 
 class Jizura(BaseModel):
     """JIZURA 动态排版（歌词 PV 风格）的参数。主题是我们从 JIZURA 部件库里挑选组合的预设，见 jizura.py。"""
-    theme: Literal["叠字海报", "清新抒情", "动感卡点", "日系文字PV"] = Field("叠字海报", description="排版主题")
+    theme: Literal["宋韵留白", "水墨书法", "叠字国潮", "清新诗意"] = Field("宋韵留白", description="排版主题")
     palette: str = Field("auto", description="配色：auto 表示由主题按随机种子挑选，或 JIZURA 配色名如 ocean / mono / sunset")
     seed: int = Field(1, description="随机种子：同一个种子结果完全相同，换种子换一种编排")
     motion: float = Field(0.6, ge=0, le=1, description="动作幅度 0–1")
@@ -30,6 +30,11 @@ class Jizura(BaseModel):
     density: float = Field(0.5, ge=0, le=1, description="分镜细碎程度 0–1：越大一句歌词切成越多镜头")
     flash: bool = Field(False, description="重拍闪白")
     chorus_hit: bool = Field(True, description="副歌句做一次「重击」（闪光 + 震动）")
+
+    @field_validator("theme", mode="before")
+    @classmethod
+    def _old_theme(cls, v):  # 早期版本的主题名
+        return {"叠字海报": "叠字国潮", "清新抒情": "清新诗意", "动感卡点": "叠字国潮", "日系文字PV": "宋韵留白"}.get(v, v)
 
 
 class Captions(BaseModel):
