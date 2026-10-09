@@ -25,7 +25,7 @@ class Jizura(BaseModel):
     palette: str = Field("auto", description="配色：auto 表示由主题按随机种子挑选，或 JIZURA 配色名如 ocean / mono / sunset")
     seed: int = Field(1, description="随机种子：同一个种子结果完全相同，换种子换一种编排")
     motion: float = Field(0.6, ge=0, le=1, description="动作幅度 0–1")
-    glitch: float = Field(0.15, ge=0, le=1, description="故障 / 色偏强度 0–1")
+    glitch: float = Field(0.0, ge=0, le=1, description="故障 / 色偏强度 0–1")
     decor: float = Field(0.3, ge=0, le=1, description="装饰元素多少 0–1")
     density: float = Field(0.5, ge=0, le=1, description="分镜细碎程度 0–1：越大一句歌词切成越多镜头")
     flash: bool = Field(False, description="重拍闪白")

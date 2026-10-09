@@ -66,7 +66,7 @@ PRESETS: dict[str, StyleProfile] = {
         pacing=Pacing(avg_shot_seconds=0.8, cut_on_beat=True, hook_seconds=2,
                       notes="主歌每拍一切，副歌半拍一切；高潮前留一个 1–2 秒的长镜头蓄力"),
         captions=Captions(engine="JIZURA 动态排版", font="得意黑", size="大",
-                          jizura=Jizura(theme="叠字国潮", seed=1, motion=0.85, glitch=0.15, decor=0.4, density=0.7,
+                          jizura=Jizura(theme="叠字国潮", seed=1, motion=0.75, glitch=0.0, decor=0.3, density=0.5,
                                         flash=True)),
         transitions=Transitions(style="硬切为主，重拍处用快速推拉或甩镜", duration_seconds=0.15),
         color_grade=ColorGrade(look="高对比、偏鲜艳", notes="所有素材统一色温"),
