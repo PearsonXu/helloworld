@@ -101,3 +101,15 @@ StyleProfile
 | 11 | 乱码解密 | 字符先乱跳再定格成歌词 | GSAP ScrambleText；ASS 可逐帧近似 |
 | 12 | 闪光扫过 | 一道高光从左扫到右 | **已接入**：`lyrics.py`，ASS `\clip` + `\t` 多层光带（见 `samples/shine_sweep.jpg`） |
 | 13 | 迷幻音频背景 | MilkDrop 预设随音乐变化，叠加歌词 | Butterchurn 渲染背景 + 任一字幕引擎 |
+
+## 补充：叠字（背景大字 + 前景字重叠）
+
+GitHub 上没有找到现成的完整项目，只有零散的技术示例：CSS 用伪元素在正文后面放半透明大字（[GeeksforGeeks](https://www.geeksforgeeks.org/css/how-to-use-text-as-background-using-css/)）、多层文字阴影做回声（[CodePen](https://codepen.io/TajShireen/pen/abzmoRE)、[CodePen](https://codepen.io/mandymichael/pen/vxmKpz)）、镂空字（[CSS-Tricks](https://css-tricks.com/css-techniques-and-effects-for-knockout-text/)）；Remotion 组件「Stacked Beat Lines」「Text Behind Subject」（[21st.dev](https://21st.dev/@21st/components/text-behind-subject.md)，需要 API Key）。歌词渲染器 [lyric-dom](https://github.com/Xpercent/lyric-dom) 给伴唱行单独设字号和透明度，思路接近。
+
+用我们的 ASS 渲染器可以直接做，三个变体的样张见 `samples/echo_layered.jpg`，字幕源文件在 `samples/echo_ass/`：
+
+| 变体 | 背景层 | 前景层 | 动画 |
+|---|---|---|---|
+| A 空心大字 | 关键词放大 5 倍，只留描边、半透明 | 整句亮黄实字，压在空心字中间 | 背景字从 112% 缓慢缩到 100%；前景字从下方升起 |
+| B 斜置淡字 | 整句放大到超出画面，斜 8°，很淡 | 白字，关键词换强调色并放大 | 背景字整段缓慢横移；前景字从左侧滑入 |
+| C 撞色色块 | 关键词巨字，强调色、半透明实心 | 整句白字带深色描边 | 两层从相反方向滑入，背景字随后缓慢放大 |

@@ -1,0 +1,16 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: S,Noto Serif SC,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,4,0,1,0,0,5,0,0,0,1
+Style: K,Smiley Sans,80,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,4,0,1,0,0,5,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:04.00,S,,0,0,0,,{\an5\pos(540,970)\fs400\fsp-10\1a&HFF&\bord3\3c&HFFFFFF&\3a&H70&\fad(500,300)\fscx112\fscy112\t(0,3600,\fscx100\fscy100)}弯月
+Dialogue: 1,0:00:00.00,0:00:04.00,S,,0,0,0,,{\an5\move(540,1090,540,1040,250,750)\fs88\1c&H4AD5FF&\bord0\shad6\4c&H000000&\4a&H60&\fad(450,300)}你看啊仲夏的弯月
