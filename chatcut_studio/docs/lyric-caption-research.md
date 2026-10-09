@@ -113,3 +113,18 @@ GitHub 上没有找到现成的完整项目，只有零散的技术示例：CSS 
 | A 空心大字 | 关键词放大 5 倍，只留描边、半透明 | 整句亮黄实字，压在空心字中间 | 背景字从 112% 缓慢缩到 100%；前景字从下方升起 |
 | B 斜置淡字 | 整句放大到超出画面，斜 8°，很淡 | 白字，关键词换强调色并放大 | 背景字整段缓慢横移；前景字从左侧滑入 |
 | C 撞色色块 | 关键词巨字，强调色、半透明实心 | 整句白字带深色描边 | 两层从相反方向滑入，背景字随后缓慢放大 |
+
+### GitHub 上和「叠字 / 背景大字」相关的开源项目
+
+| 项目 | ★ | 和叠字的关系 | 技术 | 许可 |
+|---|---|---|---|---|
+| [pv-tool](https://github.com/DanteAlighieri13210914/pv-tool)（在线演示 pv.pixjam.cn） | 441 | 面向日系歌词 PV；54 种效果里有「描边与分层文字」「主标题大字」「散落文字」，16 套模板 | PixiJS 8 + TypeScript，浏览器实时渲染，跟随 BPM | **非商业许可**（2026/3/24 起，商用需付费） |
+| [bang-motion](https://github.com/bangtutorial/bang-motion) | 587 | 「海报色块」风格：巨大裁切大字 + 纯色块，按节拍砸入 | HTML/GSAP，可用 puppeteer + ffmpeg 导出 MP4 | MIT |
+| [codrops/RepetitiveTypography](https://github.com/codrops/RepetitiveTypography) | 43 | 同一个词重复复制多层，形成回声 | 网页（npm） | MIT |
+| [folia-major](https://github.com/chthollyphile/folia-major) | 4.1k | 播放器，8 种全屏「文字 MV」歌词动画；支持逐字歌词；有透明视频导出插件 | React + Electron | AGPL-3.0 |
+| [vocaloid-style-mv-pipeline](https://github.com/EGSECDA/vocaloid-style-mv-pipeline) | 约 50–80 | V 家风格歌词 MV 流水线（Claude Code 技能），带歌词动态排版 | Canvas2D/WebGL2，无头渲染 16:9 / 9:16 | 未核实 |
+| [codrops-kinetic-typo](https://github.com/marioecg/codrops-kinetic-typo) | 182 | 3D 动感排版（文字重复贴在立体形状上） | three.js | 未核实 |
+| [refined-now-playing-netease](https://github.com/solstice23/refined-now-playing-netease) | 442 | 网易云「正在播放」页歌词动画 | BetterNCM 插件 | 未核实 |
+| [TextAlive App API](https://scrapbox.io/textalive/TextAlive%20App%20API) | — | 日本产总研的歌词动画框架，初音未来「魔法未来」编程大赛在用 | JavaScript | 未核实 |
+
+没有找到把「同一句放大当背景 + 另一层重叠」做成独立预设的项目；pv-tool 的效果最接近，但不能商用。
