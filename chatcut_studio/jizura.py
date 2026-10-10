@@ -64,12 +64,12 @@ THEMES: dict[str, dict] = {
         "koma": 0,
         "fx": {"chroma": 0.05, "texture": 0.3},
         "allow": {
-            "layout": ["cnPoem", "cnStagger", "cnFrame", "center", "columnsBig", "halfVertical", "tyBaseline", "quote"],
+            "layout": ["cnPoem", "cnStagger", "cnFrame", "center", "halfVertical", "tyBaseline", "quote"],
             "treat": ["none", "softShadow", "emphasisDots", "fadeChars"],
             "enter": ["fadeStagger", "blurStagger", "trackIn", "riseMask", "blur", "glint"],
             "hold": ["still", "drift", "breathe", "zoomSlow", "focusRack"],
             "exit": ["blur", "drift", "blurOutStagger", "dissolve", "trackOutWide", "riseOut"],
-            "decor": ["seal", "verticalStrip"],
+            "decor": [],
             "cam": ["push", "dollyIn", "focusIn", "pullOut"],
             "trans": ["pushSlide", "uncover"],
         },
@@ -80,12 +80,12 @@ THEMES: dict[str, dict] = {
         "koma": 0,
         "fx": {"chroma": 0.0, "texture": 0.4},
         "allow": {
-            "layout": ["cnPoem", "cnMoon", "cnFrame", "columnsBig", "center", "halfVertical"],
+            "layout": ["cnPoem", "cnMoon", "cnFrame", "center", "halfVertical"],
             "treat": ["none", "softShadow", "fadeChars"],
             "enter": ["inkBleed", "brushReveal", "strokeOrder", "inkDrop", "strokeDraw", "blur", "fadeStagger"],
             "hold": ["still", "drift", "breathe", "zoomSlow"],
             "exit": ["dissolve", "drift", "blurOutStagger", "undraw", "blur"],
-            "decor": ["seal"],
+            "decor": [],
             "cam": ["push", "dollyIn", "pullOut", "driftDiag"],
             "trans": ["inkBlob", "pushSlide"],
         },
@@ -101,7 +101,7 @@ THEMES: dict[str, dict] = {
             "enter": ["zoomOut", "trackIn", "riseMask", "slideL", "slideR"],
             "hold": ["still", "drift", "zoomSlow", "breathe"],
             "exit": ["cut", "trackOutWide", "zoomFar", "blur"],
-            "decor": ["seal"],
+            "decor": [],
             "cam": ["push", "pullOut", "dollyIn"],
             "trans": ["pushSlide"],
         },
@@ -112,7 +112,7 @@ THEMES: dict[str, dict] = {
         "koma": 0,
         "fx": {"chroma": 0.05, "texture": 0.2},
         "allow": {
-            "layout": ["cnPoem", "cnMoon", "cnStagger", "center", "halfVertical", "quote", "columnsBig"],
+            "layout": ["cnPoem", "cnMoon", "cnStagger", "center", "halfVertical", "quote"],
             "treat": ["none", "softShadow", "glow", "fadeChars"],
             "enter": ["blur", "fadeStagger", "blurStagger", "backlight", "glint", "riseMask", "trackIn"],
             "hold": ["still", "drift", "float", "breathe", "glowFlicker"],
@@ -219,7 +219,8 @@ function enabledFrom(allow) {
     const all = J.order(g);
     const pats = allow[g];
     let keep = null;
-    if (pats && pats.length) {
+    if (Array.isArray(pats) && !pats.length) keep = new Set();      // 空列表：这一类一个都不用
+    else if (pats && pats.length) {
       const hit = (k, p) => p.endsWith('*') ? k.startsWith(p.slice(0, -1)) && /[A-Z]/.test(k[p.length - 1] || '') : k === p;
       keep = new Set(all.filter(k => pats.some(p => hit(k, p))));
       if (!keep.size) keep = null;            // 白名单里的部件都不存在（JIZURA 升级改名）时退回全部
@@ -279,11 +280,11 @@ J.splitLines = (text, maxPer) => {
     cx: (Math.min(a.x0, b.x0) + Math.max(a.x1, b.x1)) / 2, cy: (Math.min(a.y0, b.y0) + Math.max(a.y1, b.y1)) / 2, boxes: [] };
   const firstHan = t => [...t].find(c => J.isKanji(c) || /[㐀-鿿]/.test(c)) || [...t][0] || '';
   // 朱砂小印：方形印底 + 反白字，盖下去时略微放大再落定
-  function seal(env, ch, x, y, s, a, font) {
-    if (a <= 0.01 || !ch) return;
-    const k = 1 + 0.25 * (1 - E.outBack(J.clamp(a), 2));
-    env.rect(x - s * k / 2, y - s * k / 2, s * k, s * k, env.sc.accent, a * 0.92, false);
-    env.draw({ text: ch, font, size: s * k * 0.66, x, y, color: SEAL_INK, alpha: a, ghost: false });
+  function seal(env, x, y, s, a) {
+    if (a <= 0.01) return;
+    const k = 1 + 0.25 * (1 - E.outBack(J.clamp(a), 2)), h = s * k / 2, g = h * 0.62;
+    env.rect(x - h, y - h, h * 2, h * 2, env.sc.accent, a * 0.92, false);
+    env.line([[x - g, y - g], [x + g, y - g], [x + g, y + g], [x - g, y + g], [x - g, y - g]], SEAL_INK, Math.max(1, s * 0.07), a * 0.9, false);
   }
   // 按词把一句分成 n 段（竖排分列 / 错落分组用）
   const splitN = (text, n) => n <= 1 ? [text] : J.splitLines(text, Math.ceil([...text].length / n)).split('\n');
@@ -308,6 +309,11 @@ J.splitLines = (text, maxPer) => {
     J.combineChar = fns => cc(fns.concat([hi]));
     try { return origMain(env, it); } finally { J.combineChar = cc; }
   };
+  // JIZURA 自带版式里会把整句再写一遍小字的选项关掉：center 的副标题、quote 的落款
+  for (const [k, off] of [['center', { sub: false }], ['quote', { attrib: false }]]) {
+    const L = J.LAYOUTS[k]; if (!L) continue;
+    const plan0 = L.plan; L.plan = (rng, cut, st) => Object.assign(plan0(rng, cut, st), off);
+  }
   const reg = (key, def) => J.register('layout', key, Object.assign({ w: 1.6, portrait: 1.6, tags: ['calm', 'editorial'] }, def), PK);
 
   /* 诗笺：竖排正文（多列从右往左）+ 一侧发丝线 + 列尾朱印 */
@@ -332,7 +338,7 @@ J.splitLines = (text, maxPer) => {
       const e = tin(env, 0.1, 0.9) * tout(env);
       const lx = cx - P.side * ((cols.length - 1) / 2 * gap + size * 0.95), y0 = cy - colH / 2 - size * 0.4;
       env.line([[lx, y0], [lx, y0 + (colH + size * 1.4) * e]], sc.sub, hair(env), 0.55, false);
-      if (P.seal || kw) seal(env, firstHan(kw || text), cx - P.side * ((cols.length - 1) / 2 * gap) , cy + colH / 2 + size * 0.75, size * 0.48, tin(env, 0.45, 0.35) * tout(env), P.font);
+      if (P.seal) seal(env, cx - P.side * ((cols.length - 1) / 2 * gap), cy + colH / 2 + size * 0.75, size * 0.42, tin(env, 0.45, 0.35) * tout(env));
       return bb;
     },
   });
@@ -345,17 +351,28 @@ J.splitLines = (text, maxPer) => {
       const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text);
       let units = J.chunkText(text).map(strip).filter(Boolean);
       if (units.length < 2) { const a = [...text]; const k = Math.ceil(a.length / 2); units = [a.slice(0, k).join(''), a.slice(k).join('')]; }
-      const kw = kwIn(env, text);
-      const head = kw || units[0], rest = kw ? text : units.slice(1).join('');
-      const bs = Math.min(W * 0.8 / [...head].length, W * 0.3), ss = Math.min(bs * 0.36, W * 0.82 / Math.max(1, [...rest].length) / 1.2);
-      const bw = meas(head, P.big, bs).w, sw = meas(rest, P.small, ss, { track: 0.18 }).w;
-      const L = W * 0.1, R = W * 0.9, by = H * P.y, sy = by + bs * 0.78;
-      const bx = P.flip ? R - bw / 2 : L + bw / 2, sx = P.flip ? L + sw / 2 : R - sw / 2;
-      let bb = J.mainDraw(env, { text: head, font: P.big, size: bs, x: bx, y: by, color: sc.fg, mi: 0 });
-      bb = union(bb, J.mainDraw(env, { text: rest, font: P.small, size: ss, x: sx, y: sy, track: 0.18, color: sc.fg, mi: 4 }));
-      const e = tin(env, 0.25, 0.7) * tout(env);
-      const a0 = P.flip ? sx + sw / 2 + ss * 0.6 : sx - sw / 2 - ss * 0.6, a1 = P.flip ? R - bw * 0.15 : L + bw * 0.15;
-      env.line([[a0, sy], [J.lerp(a0, a1, e), sy]], sc.accent, Math.max(2, ss * 0.06), 0.9, false);
+      // 有关键词：关键词放大，前半句小字在左上、后半句小字在右下，按阅读顺序排，不重复
+      const kw = kwIn(env, text), at = kw ? text.indexOf(kw) : -1;
+      const pre = at > 0 ? text.slice(0, at) : '', head = kw || units[0];
+      const post = kw ? text.slice(at + kw.length) : units.slice(1).join('');
+      const bs = Math.min(W * 0.8 / [...head].length, W * 0.3);
+      const ssOf = t => Math.min(bs * 0.36, W * 0.82 / Math.max(1, [...t].length) / 1.2);
+      const bw = meas(head, P.big, bs).w, L = W * 0.1, R = W * 0.9, by = H * P.y;
+      const bx = P.flip ? R - bw / 2 : L + bw / 2;
+      let bb = null;
+      if (pre) {                     // 前半句：贴着大字上沿，和大字同一侧对齐
+        const ps = ssOf(pre), pw = meas(pre, P.small, ps, { track: 0.18 }).w;
+        bb = J.mainDraw(env, { text: pre, font: P.small, size: ps, x: P.flip ? R - pw / 2 : L + pw / 2, y: by - bs * 0.78, track: 0.18, color: sc.fg, mi: 0, noKw: true });
+      }
+      bb = union(bb, J.mainDraw(env, { text: head, font: P.big, size: bs, x: bx, y: by, color: sc.fg, mi: 2 }));
+      if (post) {                    // 后半句：落在另一侧下方，一条朱色短线把它和大字连起来
+        const ss = ssOf(post), sw = meas(post, P.small, ss, { track: 0.18 }).w, sy = by + bs * 0.78;
+        const sx = P.flip ? L + sw / 2 : R - sw / 2;
+        bb = union(bb, J.mainDraw(env, { text: post, font: P.small, size: ss, x: sx, y: sy, track: 0.18, color: sc.fg, mi: 5, noKw: true }));
+        const e = tin(env, 0.25, 0.7) * tout(env);
+        const a0 = P.flip ? sx + sw / 2 + ss * 0.6 : sx - sw / 2 - ss * 0.6, a1 = P.flip ? R - bw * 0.15 : L + bw * 0.15;
+        env.line([[a0, sy], [J.lerp(a0, a1, e), sy]], sc.accent, Math.max(2, ss * 0.06), 0.9, false);
+      }
       return bb;
     },
   });
@@ -366,8 +383,7 @@ J.splitLines = (text, maxPer) => {
     plan: (rng, cut, st) => ({ font: rng.pick(fo(st, ['display'])), up: rng.pick([1, -1]) }),
     render(env) {
       const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text), n = [...text].length;
-      const kw = kwIn(env, text);
-      const back = kw || (n > 6 ? J.splitLines(text, Math.ceil(n / 2)) : text);
+      const back = n > 6 ? J.splitLines(text, Math.ceil(n / 2)) : text;
       const es = J.fitSize(back, P.font, W * 0.94, H * 0.36, { lead: 1.05 }) * (1 + 0.04 * J.clamp(env.lt / Math.max(0.5, env.cut.dur)));
       const front = n > 7 ? J.splitLines(text, Math.ceil(n / 2)) : text;
       const fs = Math.min(es * 0.42, J.fitSize(front, P.font, W * 0.7, H * 0.2, { track: 0.08, lead: 1.25 }));
@@ -401,8 +417,7 @@ J.splitLines = (text, maxPer) => {
       };
       frame(x0, y0, x1, y1, lw * 2.2, 0.75); frame(x0 + g, y0 + g, x1 - g, y1 - g, lw, 0.5);
       const bb = J.mainDraw(env, { text: t, font: P.font, size, x: cx, y: cy, vertical: vert, track: vert ? 0.04 : 0.1, lead: 1.35, color: sc.fg });
-      const kw = kwIn(env, text);
-      if (P.seal || kw) seal(env, firstHan(kw || text), x1, y1, size * 0.5, tin(env, 0.7, 0.35) * tout(env), P.font);
+      if (P.seal) seal(env, x1, y1, size * 0.42, tin(env, 0.7, 0.35) * tout(env));
       return bb;
     },
   });
@@ -416,8 +431,6 @@ J.splitLines = (text, maxPer) => {
       const R = W * 0.27, mx = W / 2 + (P.mode === 'v' ? -P.side * W * 0.1 : 0), my = H * 0.36;
       const e = tin(env, 0, 1.2) * tout(env);
       env.circle(mx, my, R * (0.96 + 0.04 * e), sc.fg, null, 0, 0.09 * e, false);
-      const kw = kwIn(env, text);
-      if (kw) env.draw({ text: kw, font: P.font, size: Math.min(R * 1.25 / [...kw].length, R * 0.8), x: mx, y: my, color: sc.accent, alpha: 0.85 * e, ghost: false });
       if (P.ring) env.arc(mx, my, R * 1.08, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * E.inOutCubic(J.clamp(env.lt / 1.4)), sc.sub, hair(env), 0.55 * tout(env), false);
       if (P.mode === 'v' && n <= 9) {
         const size = Math.min(H * 0.46 / n, W * 0.14), h = n * size * 1.04;
