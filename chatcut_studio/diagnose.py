@@ -21,7 +21,7 @@ from pathlib import Path
 from . import gateway, settings
 from .desktop import _home
 
-WATCH_KEYS = re.compile(r"^(ANTHROPIC_|CLAUDE_CODE_USE_|DASHSCOPE|QWEN)", re.I)
+WATCH_KEYS = re.compile(r"^(ANTHROPIC_|CLAUDE_CODE_USE_|DASHSCOPE|QWEN|OPENAI_BASE_URL|OPENAI_API_BASE|CODEX_)", re.I)
 SECRET_KEYS = re.compile(r"(TOKEN|KEY|SECRET)", re.I)
 OTHER_MODEL = re.compile(r"qwen|dashscope|aliyuncs|bailian|百炼|通义", re.I)
 
@@ -143,6 +143,22 @@ def run_claude_once(timeout: int = 120) -> dict:
     return {"ran": True, "via_gateway": via, "models": models, "message": msg, "error": bool(err)}
 
 
+def run_codex_once(timeout: int = 120) -> dict:
+    """在本机实际调用一次 Codex（Desktop 里的「ChatGPT」），看网关有没有收到 Responses 请求。"""
+    exe = shutil.which("codex")
+    if not exe:
+        return {"ran": False, "message": "本机找不到 codex 命令"}
+    before = gateway.RECENT[-1] if gateway.RECENT else None
+    try:
+        p = subprocess.run([exe, "exec", "--skip-git-repo-check", "请只回复两个字：收到"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout, cwd=str(_home()))
+        out = (p.stdout + p.stderr).strip()
+    except subprocess.TimeoutExpired:
+        out = f"Codex {timeout} 秒没有回复"
+    via = bool(gateway.RECENT and gateway.RECENT[-1] is not before and "Studio 自测" not in gateway.RECENT[-1]["client"])
+    return {"ran": True, "via_gateway": via, "models": [], "message": out[-300:], "error": not via}
+
+
 def _points_elsewhere(e: dict) -> bool:
     return e["key"].upper() == "ANTHROPIC_BASE_URL" and e["value"].rstrip("/") != gateway.gateway_url()
 
@@ -152,13 +168,18 @@ async def diagnose(run_claude: bool = True) -> dict:
     envs, sets = env_vars(), settings_entries()
     desk = await asyncio.to_thread(chatcut_desktop_configs)
     claude = await asyncio.to_thread(run_claude_once) if run_claude and st["linked"] else None
+    codex = await asyncio.to_thread(run_codex_once) if run_claude and st["codex_linked"] else None
     findings = []
 
     def add(level, text):
         findings.append({"level": level, "text": text})
 
-    if not st["linked"]:
-        add("fail", "还没有接入：点「接入 Claude Code」。")
+    if not st["codex_installed"] and not st["claude_installed"]:
+        add("fail", "本机既没有 Codex 也没有 Claude Code，ChatCut Desktop 的 Agent 按钮里就不会有它们。")
+    if not st["linked"] and not st["codex_linked"]:
+        add("fail", "还没有接入：Desktop 的 Agent 按钮里是「ChatGPT」就点「接入 Codex」，是「Claude」就点「接入 Claude Code」。")
+    if st["codex_installed"] and not st["codex_linked"]:
+        add("warn", "本机有 Codex（Desktop 里显示为「ChatGPT」），但还没接入：点「接入 Codex」。")
     if st["problem"]:
         add("fail", f"DeepSeek 配置不完整：{st['problem']}")
     for e in envs:
@@ -187,9 +208,16 @@ async def diagnose(run_claude: bool = True) -> dict:
         else:
             add("fail", "本机直接运行 Claude Code，网关没有收到请求：Claude Code 被别的配置覆盖了（见上面的环境变量 / 设置文件），"
                         f"它用的模型是 {', '.join(claude.get('models') or []) or '未知'}。")
+    if codex:
+        if codex["via_gateway"]:
+            add("ok", "本机直接运行 Codex 时已经通过网关用上了 DeepSeek。如果 ChatCut Desktop 里还不是，"
+                      "重启 ChatCut Desktop，在 Agent 按钮里选「ChatGPT」，新开一个对话。")
+        else:
+            add("fail", "本机直接运行 Codex，网关没有收到请求：Codex 被别的配置覆盖了（环境变量、项目里的 .codex/config.toml，"
+                        "或者 Desktop 启动它时指定了别的模型）。Codex 的输出见明细。")
     if not any(f["level"] == "fail" for f in findings) and not gateway.RECENT:
-        add("warn", "网关还没有收到过 Claude Code 的请求。在 ChatCut Desktop 里把 Agent 切到「Claude Code」，新开对话发一句话后再诊断一次。")
+        add("warn", "网关还没有收到过 Desktop 的请求。在 ChatCut Desktop 里把 Agent 切到「ChatGPT」（或「Claude」），新开对话发一句话后再诊断一次。")
     return {"status": st, "findings": findings,
             "env": [{**e, "value": mask(e["key"], e["value"])} for e in envs],
             "settings": [{**e, "value": mask(e["key"], e["value"])} for e in sets],
-            "desktop_configs": desk, "claude": claude, "recent": list(gateway.RECENT)[-10:]}
+            "desktop_configs": desk, "claude": claude, "codex": codex, "recent": list(gateway.RECENT)[-10:]}

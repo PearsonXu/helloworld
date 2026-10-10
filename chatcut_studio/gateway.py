@@ -390,9 +390,11 @@ def unlink() -> dict:
 
 
 def refresh_if_linked() -> None:
-    """在 Studio 里换了模型：已接入时顺手更新 Claude Code 里显示的模型名。"""
+    """在 Studio 里换了模型：已接入时顺手更新 Claude Code / Codex 里的模型名。"""
     if linked():
         link()
+    if codex_linked():
+        link_codex()
 
 
 def status() -> dict:
@@ -406,7 +408,10 @@ def status() -> dict:
             problem = problem or f"{p.label} 还没有选择模型"
     except (KeyError, ValueError) as e:
         p, how, model, problem = None, "", "", str(e)
+    import shutil
     return {"url": gateway_url(), "linked": linked(s), "claude_settings": str(claude_settings_path()),
+            "codex_linked": codex_linked(s), "codex_config": str(codex_config_path()),
+            "codex_installed": bool(shutil.which("codex")), "claude_installed": bool(shutil.which("claude")),
             "provider": g.provider, "provider_label": p.label if p else "", "how": how, "model": model,
             "small_model": g.small_model, "mode": g.mode, "problem": problem}
 
@@ -422,3 +427,159 @@ async def self_test() -> dict:
         msg = (data.get("error") or {}).get("message") if isinstance(data, dict) else ""
         return {"ok": False, "message": msg or f"HTTP {r.status_code}"}
     return {"ok": True, "message": _text_of(data.get("content")) or "（模型返回为空）", "model": data.get("model", "")}
+
+
+# ---------------------------------------------------------------- Codex（ChatCut Desktop 里的「ChatGPT」Agent）
+async def handle_responses(body: dict, headers) -> Response:
+    """/gateway/openai/v1/responses：Codex 用的 Responses 接口，翻译成 DeepSeek 的 /chat/completions。"""
+    from . import responses_api as ra
+    rec = {"time": time.strftime("%H:%M:%S"), "requested": body.get("model", ""), "client": (headers.get("user-agent") or "Codex")[:80],
+           "stream": bool(body.get("stream"))}
+    r = await _handle_responses(body, headers, rec)
+    rec["status"] = r.status_code
+    RECENT.append(rec)
+    return r
+
+
+def _resp_error(status: int, message: str) -> JSONResponse:
+    return JSONResponse({"error": {"message": message, "type": "invalid_request_error" if status < 500 else "server_error", "code": None}},
+                        status_code=status)
+
+
+async def _handle_responses(body: dict, headers, rec: dict) -> Response:
+    from . import responses_api as ra
+    s = settings.load()
+    if not authorized(headers, s.gateway.token):
+        return _resp_error(401, "ChatCut Studio 网关：Token 不对。请在 Studio「连接设置」里重新点「接入 Codex」。")
+    try:
+        p = s.provider(s.gateway.provider)
+    except KeyError as e:
+        return _resp_error(400, f"ChatCut Studio 网关：没有服务商 {e}")
+    if not p.key() or not p.base_url:
+        return _resp_error(400, f"ChatCut Studio 网关：{p.label} 的 base_url 或 API Key 还没填")
+    model = s.gateway.model or p.model
+    if not model:
+        return _resp_error(400, f"ChatCut Studio 网关：{p.label} 还没有选择模型")
+    rec["model"] = model
+    req, tr = ra.to_chat(body, model)
+    rid = "resp_" + uuid.uuid4().hex[:24]
+
+    if not body.get("stream"):
+        try:
+            status, data = await _openai(p, req)
+        except httpx.HTTPError as e:
+            return _resp_error(502, f"连不上 {p.label}：{e}")
+        if status >= 400:
+            return _resp_error(status, f"{p.label}：{(data.get('error') or {}).get('message') or data}")
+        items, usage = ra.from_chat(data, tr)
+        return JSONResponse(ra.response_obj(rid, model, "completed", items, usage))
+
+    async def stream():
+        ev = ra.Events()
+        yield ev("response.created", response=ra.response_obj(rid, model, "in_progress", []))
+        yield ev("response.in_progress", response=ra.response_obj(rid, model, "in_progress", []))
+        task = asyncio.ensure_future(_openai(p, req))
+        while not task.done():                      # 上游不是流式：等待期间发 SSE 注释保活
+            await asyncio.wait({task}, timeout=10)
+            if not task.done():
+                yield b": keepalive\n\n"
+        try:
+            status, data = task.result()
+        except httpx.HTTPError as e:
+            status, data = 502, {"error": {"message": f"连不上 {p.label}：{e}"}}
+        if status >= 400:
+            msg = f"{p.label}：{(data.get('error') or {}).get('message') or data}"
+            yield ev("response.failed", response=ra.response_obj(rid, model, "failed", [], None, {"code": str(status), "message": msg}))
+            return
+        items, usage = ra.from_chat(data, tr)
+        for i, it in enumerate(items):
+            for b in ra.item_events(ev, i, it):
+                yield b
+        yield ev("response.completed", response=ra.response_obj(rid, model, "completed", items, usage))
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+CODEX_PROVIDER = "chatcut_studio"
+_TABLE = re.compile(r"^\s*\[")
+_TOP_KEY = re.compile(r"^\s*(model_provider|model)\s*=")
+
+
+def codex_config_path() -> Path:
+    from .desktop import _home
+    return Path(os.environ.get("CODEX_HOME") or _home() / ".codex") / "config.toml"
+
+
+def _codex_read() -> str:
+    f = codex_config_path()
+    return f.read_text("utf-8") if f.is_file() else ""
+
+
+def _codex_parts(text: str) -> tuple[list[str], list[str]]:
+    """（顶层键的行, 从第一个表头开始的其余行）。TOML 的顶层键必须写在所有 [表] 之前。"""
+    lines = text.splitlines()
+    i = next((k for k, l in enumerate(lines) if _TABLE.match(l)), len(lines))
+    return lines[:i], lines[i:]
+
+
+def _drop_our_table(lines: list[str]) -> list[str]:
+    out, skip = [], False
+    for l in lines:
+        if _TABLE.match(l):
+            skip = l.strip() == f"[model_providers.{CODEX_PROVIDER}]"
+        if not skip:
+            out.append(l)
+    while out and not out[-1].strip():
+        out.pop()
+    return out
+
+
+def codex_linked(s: settings.Settings | None = None) -> bool:
+    s = s or settings.load()
+    try:
+        import tomllib
+        data = tomllib.loads(_codex_read())
+    except (OSError, ValueError):
+        return False
+    prov = (data.get("model_providers") or {}).get(CODEX_PROVIDER) or {}
+    return (data.get("model_provider") == CODEX_PROVIDER and prov.get("base_url") == gateway_url() + "/openai/v1"
+            and prov.get("experimental_bearer_token") == s.gateway.token)
+
+
+def _write_codex(text: str) -> None:
+    f = codex_config_path()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".toml.tmp")
+    tmp.write_text(text, "utf-8")
+    os.replace(tmp, f)
+
+
+def link_codex() -> dict:
+    """让 Codex（Desktop 里的「ChatGPT」）通过网关用 DeepSeek：只改 config.toml 的 model_provider / model 两行，加一个
+    [model_providers.chatcut_studio] 表；原来的两行先备份，断开时恢复。"""
+    s = settings.load()
+    p = s.provider(s.gateway.provider)
+    model = s.gateway.model or p.model or "deepseek"
+    top, rest = _codex_parts(_codex_read())
+    if not codex_linked(s):
+        settings.set_gateway_backup({m.group(1): l for l in top if (m := _TOP_KEY.match(l))}, "codex_backup")
+    top = [l for l in top if not _TOP_KEY.match(l)]
+    while top and not top[0].strip():
+        top.pop(0)
+    lines = [f'model_provider = "{CODEX_PROVIDER}"   # ChatCut Studio：Codex 通过本机网关用 DeepSeek',
+             f'model = "{model}"', *top, *_drop_our_table(rest), "",
+             f"[model_providers.{CODEX_PROVIDER}]", f'name = "ChatCut Studio · {p.label}"',
+             f'base_url = "{gateway_url()}/openai/v1"', 'wire_api = "responses"',
+             f'experimental_bearer_token = "{s.gateway.token}"']
+    _write_codex("\n".join(lines) + "\n")
+    return status()
+
+
+def unlink_codex() -> dict:
+    s = settings.load()
+    top, rest = _codex_parts(_codex_read())
+    top = [l for l in top if not _TOP_KEY.match(l)]
+    restored = [s.gateway.codex_backup[k] for k in ("model_provider", "model") if s.gateway.codex_backup.get(k)]
+    text = "\n".join([*restored, *top, *_drop_our_table(rest)]).strip()
+    _write_codex(text + "\n" if text else "")
+    settings.set_gateway_backup({}, "codex_backup")
+    return status()

@@ -39,7 +39,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（65 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（68 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
 
 ## JIZURA 动态排版（`jizura.py`）
 
@@ -78,25 +78,26 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 需要带 libass 的 ffmpeg（`ffmpeg -filters | grep ass`）。字体从 `chatcut_studio/fonts/` 或 `~/.cache/lyric-mv/fonts/` 读取，找不到时由系统字体回退。
 
-## 在 ChatCut Desktop 里用 DeepSeek（`gateway.py`）
+## 在 ChatCut Desktop 里用 DeepSeek（`gateway.py`、`responses_api.py`）
 
-ChatCut Desktop 的 AI 输入框选「Claude Code」时，Desktop 会启动本机的 Claude Code。Studio 内置一个**本机模型网关**（`http://127.0.0.1:8765/gateway`，Anthropic Messages 格式），「连接设置 → 在 ChatCut Desktop 里用 DeepSeek → 接入 Claude Code」会把 Claude Code 指向它，于是 Desktop 里的 Agent 用的就是 Studio 里配置的 DeepSeek：
+ChatCut Desktop 的 AI 面板里，输入框旁边的 Agent 按钮列出的是本机装好的 Agent：「**ChatGPT**」是本机的 **Codex**，「Claude」是 Claude Code。Studio 内置一个**本机模型网关**，「连接设置 → 在 ChatCut Desktop 里用 DeepSeek」里点「接入 Codex」（或「接入 Claude Code」），它们就改为通过 Studio 调用 DeepSeek：
 
 ```
-ChatCut Desktop AI 输入框 → Claude Code → Studio 网关 → DeepSeek（OpenAI 兼容接口）
+ChatCut Desktop「ChatGPT」→ Codex  ─ Responses 接口 ─┐
+ChatCut Desktop「Claude」 → Claude Code ─ Anthropic 接口 ─┴→ Studio 网关 → DeepSeek（OpenAI 兼容 /chat/completions）
 ```
 
 | | 说明 |
 |---|---|
-| 转发方式 | 自动：官方 `api.deepseek.com` 走 DeepSeek 的 Anthropic 兼容接口原样转发；中转等其他 OpenAI 兼容地址把请求翻译成 `/chat/completions`（工具调用、图片、思考内容 `reasoning_content` 都来回转换；Claude Code 要流式时按 Anthropic 事件格式分段发回）。也可以手动指定 |
-| 换模型 / 换 Key | 在 Studio 里改，下一次请求立即生效，不用动 Claude Code |
-| 写了什么 | 只在 `~/.claude/settings.json` 的 `env` 里写网关地址、本机 Token（不是 DeepSeek 的 Key）、显示用的模型名、上下文长度；原值先备份，「断开」时原样恢复 |
+| Codex | 网关提供 `/gateway/openai/v1/responses`（Codex 现在只用 Responses 接口），翻译成 `/chat/completions`：消息、函数调用、自由文本工具（apply_patch）、local_shell、图片；DeepSeek 的 `reasoning_content` 放进 reasoning 项的 `encrypted_content`，下一轮还原；流式按 Responses 事件格式发回。接入只改 `~/.codex/config.toml` 的 `model_provider` / `model` 两行并加 `[model_providers.chatcut_studio]` 表（写的是本机 Token，不是 DeepSeek Key），原行先备份，断开后原样恢复 |
+| Claude Code | 网关提供 `/gateway/v1/messages`：官方 `api.deepseek.com` 走 DeepSeek 的 Anthropic 兼容接口原样转发，其他 OpenAI 兼容地址翻译；接入只改 `~/.claude/settings.json` 的 `env`，先备份、断开恢复 |
+| 换模型 / 换 Key | 在 Studio 里改，下一次请求立即生效 |
 | 安全 | 网关只监听本机，要带 Studio 生成的 Token 才能用 |
-| 注意 | 接入期间本机所有 Claude Code 会话都用 DeepSeek，Studio 要保持运行 |
+| 注意 | 接入期间本机所有 Codex（或 Claude Code）会话都用 DeepSeek，Studio 要保持运行 |
 
-已用真实的 Claude Code 验证：只靠 Studio 写入的设置，Claude Code 经网关调用（模拟的）OpenAI 兼容 DeepSeek，完成「模型发起读文件 → Claude Code 执行 → 结果和思考内容回传 → 回答」的完整一轮。
+已用真实的 Codex 0.162.1 和 Claude Code 验证：只靠 Studio 写入的配置，经网关调用（模拟的）OpenAI 兼容 DeepSeek，完成「模型发起读文件 / 执行命令 → Agent 执行 → 结果和思考内容回传 → 回答」的完整一轮。
 
-**Desktop 里还是别的模型（比如 Qwen）？** 点「诊断：Desktop 里为什么不是 DeepSeek」（`diagnose.py`）：检查网关有没有收到过 Claude Code 的请求；查系统 / 用户环境变量、Claude Code 的本地和托管设置里有没有优先级更高、指向别的模型的配置；扫 ChatCut Desktop 自己的配置目录里提到 Qwen 的地方；并在本机实际调用一次 Claude Code，看它有没有走网关。结论会说明是该在 Desktop 里把 Agent 切到「Claude Code」，还是该删掉哪一项冲突配置。
+**Desktop 里还是别的模型（比如 Qwen）？** 点「诊断：Desktop 里为什么不是 DeepSeek」（`diagnose.py`）：检查网关有没有收到过 Desktop 的请求；查系统 / 用户环境变量、Claude Code 的本地和托管设置里有没有优先级更高、指向别的模型的配置；扫 ChatCut Desktop 自己的配置目录里提到 Qwen 的地方；并在本机实际调用一次 Codex / Claude Code，看它们有没有走网关。结论会说明是该在 Desktop 里把 Agent 切到「Claude Code」，还是该删掉哪一项冲突配置。
 
 在 Studio 里剪也一样用 DeepSeek：「剪辑 Agent 用什么驱动」选 API 模型（默认 DeepSeek），「ChatCut 连接」选本机 ChatCut Desktop，到「③ 一键剪辑」下任务，改的就是 Desktop 里当前打开的项目。
 
@@ -152,7 +153,8 @@ chatcut_studio/
   providers.py     Claude / OpenAI 兼容接口：模型列表、结构化输出、工具调用
   chatcut_mcp.py   直连 ChatCut MCP（OAuth / Token）
   desktop.py       查找并连接本机 ChatCut Desktop（Agent 配置 / 进程端口，HTTP / stdio）
-  gateway.py       本机模型网关：Claude Code（ChatCut Desktop 里的 Agent）通过它用 DeepSeek
+  gateway.py       本机模型网关：Codex / Claude Code（ChatCut Desktop 里的 Agent）通过它用 DeepSeek
+  responses_api.py Responses 接口 ↔ Chat Completions 翻译（给 Codex）
   diagnose.py      诊断 Desktop 里为什么没用上 DeepSeek（环境变量、设置优先级、Desktop 配置、实测）
   agent.py         三种执行器（Claude Code / API / 演示）、权限策略、运行与确认
   presets.py       5 个内置风格

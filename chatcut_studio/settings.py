@@ -94,6 +94,7 @@ class GatewayConfig(BaseModel):
     context_tokens: int = 128000     # 告诉 Claude Code 这个模型的上下文长度（它不认识第三方模型名）
     token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))   # 本机访问网关的 Token
     backup: dict[str, str | None] = Field(default_factory=dict)            # 接入前 Claude Code 里的原值
+    codex_backup: dict[str, str] = Field(default_factory=dict)              # 接入前 Codex config.toml 里 model / model_provider 的原行
 
 
 class Settings(BaseModel):
@@ -112,7 +113,7 @@ class Settings(BaseModel):
 
     def public(self) -> dict:
         d = self.model_dump(exclude={"providers", "mcp", "gateway"})
-        d["gateway"] = self.gateway.model_dump(exclude={"token", "backup"})
+        d["gateway"] = self.gateway.model_dump(exclude={"token", "backup", "codex_backup"})
         d["providers"] = [p.public() for p in self.providers]
         d["mcp"] = {"target": self.mcp.target, "url": self.mcp.url, "auth": self.mcp.auth, "has_token": bool(self.mcp.token),
                     "desktop": mask_endpoint(self.mcp.desktop.model_dump()) if self.mcp.desktop else None}
@@ -193,7 +194,7 @@ def update(patch: dict) -> Settings:
     return s
 
 
-def set_gateway_backup(backup: dict) -> None:
+def set_gateway_backup(backup: dict, field: str = "backup") -> None:
     s = load()
-    s.gateway.backup = backup
+    setattr(s.gateway, field, backup)
     save(s)

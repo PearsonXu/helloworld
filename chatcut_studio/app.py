@@ -160,6 +160,22 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             return gateway.error(401, "Token 不对", "authentication_error")
         return gateway.count_tokens(await req.json())
 
+    @app.post("/gateway/openai/v1/responses")
+    async def gw_responses(req: Request):
+        try:
+            body = await req.json()
+        except ValueError:
+            return gateway._resp_error(400, "请求不是 JSON")
+        return await gateway.handle_responses(body, req.headers)
+
+    @app.get("/gateway/openai/v1/models")
+    def gw_models(req: Request):
+        s = settings.load()
+        if not gateway.authorized(req.headers, s.gateway.token):
+            return gateway._resp_error(401, "Token 不对")
+        p = s.provider(s.gateway.provider)
+        return {"object": "list", "data": [{"id": s.gateway.model or p.model, "object": "model", "owned_by": p.label}]}
+
     @app.get("/api/gateway")
     def gw_status():
         return gateway.status()
@@ -176,6 +192,10 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
                 return gateway.link()
             if action == "unlink":
                 return gateway.unlink()
+            if action == "link-codex":
+                return gateway.link_codex()
+            if action == "unlink-codex":
+                return gateway.unlink_codex()
             if action == "test":
                 return await gateway.self_test()
         except (KeyError, ValueError, OSError) as e:

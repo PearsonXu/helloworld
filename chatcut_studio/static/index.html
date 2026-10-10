@@ -116,26 +116,38 @@
 
   <div class="card">
     <h2>在 ChatCut Desktop 里用 DeepSeek</h2>
-    <p class="sub">ChatCut Desktop 的 AI 输入框里选「Claude Code」时，Desktop 会启动本机的 Claude Code。点「接入」后，Claude Code 改为通过本程序调用上面配置的 DeepSeek，在 Studio 里换模型、换 Key 立即生效。</p>
+    <p class="sub">ChatCut Desktop 的 AI 面板里，输入框旁边的 Agent 按钮列出的是本机装好的 Agent：「<strong>ChatGPT</strong>」就是本机的 Codex，「Claude」是 Claude Code。
+      点下面的「接入」，它们就改为通过本程序调用上面配置的 DeepSeek；在 Studio 里换模型、换 Key 立即生效。</p>
     <div id="gwStatus" class="muted">读取中…</div>
-    <div class="grid" style="margin-top:8px">
-      <label>转发方式<select id="gw_mode">
-        <option value="auto">自动（推荐）</option>
-        <option value="openai">OpenAI 兼容接口</option>
-        <option value="anthropic">Anthropic 兼容接口</option></select>
-        <span class="muted" style="font-size:12px">自动：官方 api.deepseek.com 走它的 Anthropic 兼容接口；中转等其他地址按 OpenAI 兼容接口翻译</span></label>
-      <label>快速模型（Claude Code 的后台小任务用，可留空）<input id="gw_small" list="models-deepseek" placeholder="留空 = 和主模型相同"></label>
-    </div>
+    <div class="tablewrap" style="margin-top:8px"><table>
+      <tr><th>Desktop 里的名字</th><th>本机程序</th><th>状态</th><th></th></tr>
+      <tr><td><strong>ChatGPT</strong></td><td>Codex</td><td id="gwCodexSt"></td>
+        <td><button class="btn small primary" id="gwCodexLink" onclick="gwAgent('codex', true)">接入 Codex</button>
+            <button class="btn small" id="gwCodexUnlink" onclick="gwAgent('codex', false)">断开</button></td></tr>
+      <tr><td><strong>Claude</strong></td><td>Claude Code</td><td id="gwClaudeSt"></td>
+        <td><button class="btn small primary" id="gwLinkBtn" onclick="gwAgent('claude', true)">接入 Claude Code</button>
+            <button class="btn small" id="gwUnlinkBtn" onclick="gwAgent('claude', false)">断开</button></td></tr>
+    </table></div>
     <div class="row" style="margin-top:10px">
       <button class="btn" onclick="gwTest()">测试 DeepSeek</button>
-      <button class="btn primary" id="gwLinkBtn" onclick="gwLink(true)">接入 Claude Code</button>
-      <button class="btn" id="gwUnlinkBtn" onclick="gwLink(false)">断开，恢复原设置</button>
       <button class="btn" onclick="gwDiagnose()">诊断：Desktop 里为什么不是 DeepSeek</button>
       <span id="gwMsg" class="muted"></span>
     </div>
+    <details style="margin-top:8px"><summary class="muted">高级（只影响 Claude Code）</summary>
+      <div class="grid" style="margin-top:8px">
+        <label>转发方式<select id="gw_mode">
+          <option value="auto">自动（推荐）</option>
+          <option value="openai">OpenAI 兼容接口</option>
+          <option value="anthropic">Anthropic 兼容接口</option></select>
+          <span class="muted" style="font-size:12px">自动：官方 api.deepseek.com 走它的 Anthropic 兼容接口；中转等其他地址按 OpenAI 兼容接口翻译。Codex 一律按 OpenAI 兼容接口翻译。</span></label>
+        <label>快速模型（Claude Code 的后台小任务用，可留空）<input id="gw_small" list="models-deepseek" placeholder="留空 = 和主模型相同"></label>
+      </div>
+    </details>
     <div id="gwDiag"></div>
-    <div class="note">用法：① 在上面填好 DeepSeek 的 Key 和模型 → ② 点「测试 DeepSeek」→ ③ 点「接入 Claude Code」→ ④ 在 ChatCut Desktop 里新开一个对话（没生效就重启 Desktop），AI 输入框选「Claude Code」。<br>
-      注意：接入期间本机所有 Claude Code 会话都会用 DeepSeek，而且 Studio 要保持运行；点「断开」恢复原来的设置。本机需要已安装 Claude Code（Desktop 检测到它才会出现这个选项）。</div>
+    <div class="note">用法：① 在上面「模型服务商」填好 DeepSeek 的 base_url、Key、模型 → ② 点「测试 DeepSeek」→ ③ 点「接入 Codex」→
+      ④ 重启 ChatCut Desktop，AI 面板 Agent 按钮选「ChatGPT」，新开一个对话。<br>
+      注意：接入期间本机所有 Codex 会话都会用 DeepSeek，而且 Studio 要保持运行；点「断开」恢复原来的设置。
+      「Claude Code 方式」里的「一键安装插件」是给已装好的 Claude Code 装 ChatCut 插件，走 Codex 不需要它。</div>
   </div>
 
   <div class="card">
@@ -353,12 +365,16 @@ async function loadSettings() {
 async function loadGateway() {
   const g = await api("/api/gateway");
   $("#gw_small").value = g.small_model || ""; $("#gw_mode").value = g.mode || "auto";
-  const how = g.how === "anthropic" ? "DeepSeek Anthropic 兼容接口，原样转发" : g.how === "openai" ? "OpenAI 兼容接口，自动翻译" : "";
-  $("#gwStatus").innerHTML = (g.linked ? '<span class="pill ok">已接入 Claude Code</span> ' : '<span class="pill warn">未接入</span> ') +
-    (g.problem ? `<span style="color:var(--warn)">${esc(g.problem)}</span>`
-      : `模型 <span class="mono">${esc(g.model)}</span>（${esc(how)}）`) +
-    `<br><span class="muted">网关地址 <span class="mono">${esc(g.url)}</span>　Claude Code 设置文件 <span class="mono">${esc(g.claude_settings)}</span></span>`;
-  $("#gwLinkBtn").textContent = g.linked ? "重新接入（更新设置）" : "接入 Claude Code";
+  $("#gwStatus").innerHTML = (g.problem ? `<span style="color:var(--warn)">${esc(g.problem)}</span>`
+      : `使用模型 <span class="mono">${esc(g.model)}</span>`) +
+    `　<span class="muted">网关 <span class="mono">${esc(g.url)}</span></span>`;
+  const st = (installed, linked, file) => !installed && !linked ? '<span class="pill warn">本机没装</span>'
+    : (linked ? '<span class="pill ok">已接入 DeepSeek</span>' : '<span class="pill warn">未接入</span>') + `<div class="muted mono" style="font-size:11px">${esc(file)}</div>`;
+  $("#gwCodexSt").innerHTML = st(g.codex_installed, g.codex_linked, g.codex_config);
+  $("#gwClaudeSt").innerHTML = st(g.claude_installed, g.linked, g.claude_settings);
+  $("#gwCodexLink").textContent = g.codex_linked ? "重新接入" : "接入 Codex";
+  $("#gwLinkBtn").textContent = g.linked ? "重新接入" : "接入 Claude Code";
+  $("#gwCodexUnlink").style.display = g.codex_linked ? "" : "none";
   $("#gwUnlinkBtn").style.display = g.linked ? "" : "none";
 }
 async function gwSave() { await put("/api/settings", {gateway: {provider: "deepseek", small_model: $("#gw_small").value, mode: $("#gw_mode").value}}); }
@@ -369,9 +385,11 @@ async function gwTest() {
   catch (e) { $("#gwMsg").textContent = e.message; }
   loadGateway();
 }
-async function gwLink(on) {
-  try { if (on) await gwSave(); await post(on ? "/api/gateway/link" : "/api/gateway/unlink");
-        $("#gwMsg").textContent = on ? "已接入。在 ChatCut Desktop 里新开一个对话，选 Claude Code 即可。" : "已断开，Claude Code 恢复原来的设置。"; }
+async function gwAgent(which, on) {
+  const action = (on ? "link" : "unlink") + (which === "codex" ? "-codex" : "");
+  const name = which === "codex" ? "ChatGPT" : "Claude";
+  try { if (on) await gwSave(); await post("/api/gateway/" + action);
+        $("#gwMsg").textContent = on ? `已接入。重启 ChatCut Desktop，Agent 按钮选「${name}」，新开一个对话。` : "已断开，恢复原来的设置。"; }
   catch (e) { $("#gwMsg").textContent = e.message; }
   loadGateway();
 }
@@ -386,6 +404,7 @@ async function gwDiagnose() {
       <details style="margin-top:8px"><summary>明细</summary>
         <h3>网关最近收到的请求</h3>${rows(d.recent, (r) => `<tr><td>${esc(r.time)}</td><td class="mono">${esc(r.requested)} → ${esc(r.model || "")}</td><td>${r.status}</td><td class="muted">${esc(r.client)}</td></tr>`)}
         <h3>本机实际调用 Claude Code</h3>${d.claude ? `<div>${d.claude.via_gateway ? "走了网关" : "没走网关"}；模型：<span class="mono">${esc((d.claude.models || []).join(", "))}</span>；回复：${esc(d.claude.message || "")}</div>` : '<div class="muted">（没有测试：还没接入）</div>'}
+        <h3>本机实际调用 Codex</h3>${d.codex ? `<div>${d.codex.via_gateway ? "走了网关" : "没走网关"}<pre style="white-space:pre-wrap;font-size:11px">${esc(d.codex.message || "")}</pre></div>` : '<div class="muted">（没有测试：还没接入）</div>'}
         <h3>环境变量</h3>${rows(d.env, (e) => `<tr><td class="muted">${esc(e.source)}</td><td class="mono">${esc(e.key)}</td><td class="mono">${esc(e.value)}</td></tr>`)}
         <h3>Claude Code 设置文件</h3>${rows(d.settings, (e) => `<tr><td class="muted">${esc(e.source)}</td><td class="mono">${esc(e.key)}</td><td class="mono">${esc(e.value)}</td></tr>`)}
         <h3>ChatCut Desktop 配置里提到模型的地方</h3>${rows(d.desktop_configs, (e) => `<tr><td class="muted">${esc(e.file)}</td><td class="mono">${esc(e.line)}</td></tr>`)}

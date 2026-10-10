@@ -171,3 +171,84 @@ def test_diagnose_finds_qwen_overrides(isolated_data, monkeypatch):
     assert any("qwen3-coder-plus" in c["line"] for c in d["desktop_configs"])
     assert all("abcdefghijklmnop" not in c["line"] for c in d["desktop_configs"])   # Key 打码
     assert "ChatCut Desktop 自己的配置里提到了 Qwen" in text
+
+
+ORIG_CODEX = '''# 我的 Codex 配置
+model = "gpt-5.5"
+approval_policy = "on-request"
+
+[model_providers.other]
+name = "Other"
+base_url = "https://example.com/v1"
+
+[mcp_servers.chatcut_desktop]
+url = "http://127.0.0.1:5199/api/external-mcp/mcp"
+'''
+
+
+def test_link_and_unlink_codex(isolated_data):
+    """接入 Codex 只改 model_provider / model 两行并加我们的表；断开后和原来一模一样。"""
+    import tomllib
+    cfg = isolated_data / "home" / ".codex" / "config.toml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(ORIG_CODEX, "utf-8")
+    settings.update({"providers": [{"id": "deepseek", "base_url": "https://relay.example.com/v1", "model": "deepseek-v4-pro",
+                                    "api_key": "sk-x-1234567890"}]})
+    assert gateway.link_codex()["codex_linked"]
+    data = tomllib.loads(cfg.read_text("utf-8"))
+    assert data["model_provider"] == "chatcut_studio" and data["model"] == "deepseek-v4-pro"
+    assert data["approval_policy"] == "on-request" and "other" in data["model_providers"] and "chatcut_desktop" in data["mcp_servers"]
+    prov = data["model_providers"]["chatcut_studio"]
+    assert prov["wire_api"] == "responses" and prov["base_url"].endswith("/gateway/openai/v1")
+    assert prov["experimental_bearer_token"] == settings.load().gateway.token and "sk-x" not in cfg.read_text("utf-8")
+    gateway.link_codex()                                                     # 再接一次：不重复、不覆盖备份
+    assert cfg.read_text("utf-8").count("[model_providers.chatcut_studio]") == 1
+    assert not gateway.unlink_codex()["codex_linked"]
+    assert tomllib.loads(cfg.read_text("utf-8")) == tomllib.loads(ORIG_CODEX)
+
+
+def test_responses_translation_round_trip():
+    from chatcut_studio import responses_api as ra
+    body = {"model": "x", "instructions": "你是剪辑助手", "max_output_tokens": 50000, "stream": True,
+            "tools": [{"type": "function", "name": "exec_command", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}},
+                      {"type": "custom", "name": "apply_patch", "description": "改文件", "format": {"type": "grammar", "definition": "start: x"}},
+                      {"type": "web_search"}],
+            "input": [{"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "规则"}]},
+                      {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "看看"}]},
+                      {"type": "reasoning", "summary": [], "encrypted_content": "ccs1:先看文件"},
+                      {"type": "function_call", "call_id": "c1", "name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"},
+                      {"type": "function_call_output", "call_id": "c1", "output": "a.txt"},
+                      {"type": "custom_tool_call", "call_id": "c2", "name": "apply_patch", "input": "*** Begin Patch"},
+                      {"type": "custom_tool_call_output", "call_id": "c2", "output": "Done"}]}
+    chat, tr = ra.to_chat(body, "deepseek-v4-pro")
+    assert [m["role"] for m in chat["messages"]] == ["system", "system", "user", "assistant", "tool", "assistant", "tool"]
+    assert chat["messages"][3]["reasoning_content"] == "先看文件" and chat["messages"][3]["tool_calls"][0]["id"] == "c1"
+    assert json.loads(chat["messages"][5]["tool_calls"][0]["function"]["arguments"]) == {"input": "*** Begin Patch"}
+    assert [t["function"]["name"] for t in chat["tools"]] == ["exec_command", "apply_patch"] and chat["max_tokens"] == 8192
+    items, usage = ra.from_chat({"choices": [{"message": {"content": "好", "reasoning_content": "想一下", "tool_calls": [
+        {"id": "k1", "function": {"name": "apply_patch", "arguments": "{\"input\": \"*** Begin Patch\\n\"}"}},
+        {"id": "k2", "function": {"name": "exec_command", "arguments": "{\"cmd\": \"pwd\"}"}}]}}],
+        "usage": {"prompt_tokens": 7, "completion_tokens": 3}}, tr)
+    assert [i["type"] for i in items] == ["reasoning", "message", "custom_tool_call", "function_call"]
+    assert items[0]["encrypted_content"] == "ccs1:想一下" and items[2]["input"] == "*** Begin Patch\n" and usage["total_tokens"] == 10
+    ev = ra.Events()
+    stream = b"".join(b for i, it in enumerate(items) for b in ra.item_events(ev, i, it)).decode()
+    kinds = [json.loads(l[6:])["type"] for l in stream.splitlines() if l.startswith("data: ")]
+    assert kinds.count("response.output_item.done") == 4 and "response.output_text.delta" in kinds
+    assert "response.custom_tool_call_input.done" in kinds and "response.function_call_arguments.done" in kinds
+
+
+def test_responses_endpoint_via_fake_deepseek(fake_llm):
+    llm = fake_llm([{"content": "收到"}])
+    settings.update({"providers": [{"id": "deepseek", "base_url": llm.base_url, "model": "deepseek-v4-pro", "api_key": "sk-c-1234567890"}],
+                     "gateway": {"provider": "deepseek"}})
+    tok = settings.load().gateway.token
+    with TestClient(create_app()) as c:
+        assert c.post("/gateway/openai/v1/responses", json={"input": "hi"}).status_code == 401
+        r = c.post("/gateway/openai/v1/responses", json={"model": "gpt-5", "input": "hi", "stream": True},
+                   headers={"Authorization": f"Bearer {tok}"})
+        assert c.get("/gateway/openai/v1/models", headers={"Authorization": f"Bearer {tok}"}).json()["data"][0]["id"] == "deepseek-v4-pro"
+    events = [json.loads(l[6:]) for l in r.text.splitlines() if l.startswith("data: ")]
+    assert events[0]["type"] == "response.created" and events[-1]["type"] == "response.completed"
+    assert events[-1]["response"]["output"][0]["content"][0]["text"] == "收到"
+    assert llm.requests[0]["body"]["model"] == "deepseek-v4-pro"
