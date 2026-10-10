@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .desktop import Endpoint
+
 DATA_ROOT = Path(os.environ.get("CHATCUT_STUDIO_DATA", Path(__file__).parent / "data"))
 CHATCUT_MCP_URL = "https://api.chatcut.io/api/external-mcp/mcp"
 
@@ -55,9 +57,11 @@ PRESETS: list[Provider] = [
 
 
 class McpConfig(BaseModel):
+    target: Literal["cloud", "desktop"] = "cloud"     # 连 ChatCut 云端，还是本机的 ChatCut Desktop
     url: str = CHATCUT_MCP_URL
     auth: Literal["oauth", "token", "none"] = "oauth"
     token: str = ""
+    desktop: Endpoint | None = None                   # 选定的 Desktop 端点；None = 每次自动查找
 
 
 class Settings(BaseModel):
@@ -76,8 +80,28 @@ class Settings(BaseModel):
     def public(self) -> dict:
         d = self.model_dump(exclude={"providers", "mcp"})
         d["providers"] = [p.public() for p in self.providers]
-        d["mcp"] = {"url": self.mcp.url, "auth": self.mcp.auth, "has_token": bool(self.mcp.token)}
+        d["mcp"] = {"target": self.mcp.target, "url": self.mcp.url, "auth": self.mcp.auth, "has_token": bool(self.mcp.token),
+                    "desktop": mask_endpoint(self.mcp.desktop.model_dump()) if self.mcp.desktop else None}
         return d
+
+
+MASK = "***"
+
+
+def mask_endpoint(d: dict) -> dict:
+    """端点里的请求头可能带 Token，给前端看时只留名字。"""
+    return {**d, "headers": {k: MASK for k in d.get("headers") or {}}}
+
+
+def _unmask(d: dict) -> dict:
+    """前端回传的端点里请求头是 ***：从本机配置里按同一个地址取回真实值。"""
+    if not any(v == MASK for v in (d.get("headers") or {}).values()):
+        return d
+    from .desktop import from_configs
+    for e in from_configs():
+        if e.transport == d.get("transport") and e.url == d.get("url"):
+            return {**d, "headers": e.headers}
+    return {**d, "headers": {k: v for k, v in d["headers"].items() if v != MASK}}
 
 
 def _path() -> Path:
@@ -115,6 +139,10 @@ def update(patch: dict) -> Settings:
         if k in patch:
             setattr(s, k, patch[k])
     if m := patch.get("mcp"):
+        if "target" in m:
+            s.mcp.target = m["target"]
+        if "desktop" in m:            # None = 每次自动查找
+            s.mcp.desktop = Endpoint(**_unmask(m["desktop"])) if m["desktop"] else None
         if "url" in m:
             s.mcp.url = m["url"].strip()
         if "auth" in m:

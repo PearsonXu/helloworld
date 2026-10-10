@@ -39,7 +39,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（52 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（58 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
 
 ## JIZURA 动态排版（`jizura.py`）
 
@@ -77,6 +77,19 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 歌词写法：`[00:12.50]巷口{灯光}忽明忽灭`，`{词}` 标关键词；行末加 ` #chorus` 表示副歌。
 
 需要带 libass 的 ffmpeg（`ffmpeg -filters | grep ass`）。字体从 `chatcut_studio/fonts/` 或 `~/.cache/lyric-mv/fonts/` 读取，找不到时由系统字体回退。
+
+## 连接本机 ChatCut Desktop（`desktop.py`）
+
+「连接设置 → ChatCut 连接」里选 **本机 ChatCut Desktop**，Agent 就直接编辑 Desktop 里当前打开的项目（素材用本机文件），Claude Code 和 API 模型两种方式都能用。
+
+ChatCut Desktop 自带本机 MCP 连接（[官方说明](https://chatcut.io/docs/desktop-app)），但没有公开地址，所以「自动查找」会：
+
+1. 读本机 Agent 的 MCP 配置，挑出名字 / 地址 / 命令里带 chatcut、而且是本机的那一项（云端 `api.chatcut.io` 的不算）：Claude Code `~/.claude.json`（含各项目的配置）、Claude Desktop、Codex `~/.codex/config.toml`、Cursor `~/.cursor/mcp.json`；
+2. 找正在运行的 ChatCut Desktop 进程，看它在本机监听的端口，逐个试 `/api/external-mcp/mcp`、`/mcp`；
+3. 每个候选都真的连一次、列出工具，能连上的标「可连接」。
+
+找不到时可以「手动填写」本机地址（HTTP）或启动命令（stdio）。也可以选「不固定，每次连接时自动查找」（Desktop 每次启动端口可能变化时有用）。
+Claude Code 方式下，找到的端点以 `chatcut_desktop` 的名字交给 Claude Code，并要求它只用这一组工具，不去碰云端插件。配置里带的 Token 只保存在本机，不会发给网页。
 
 ## 两种 Agent 方式的区别
 
@@ -116,6 +129,7 @@ chatcut_studio/
   settings.py      模型服务商、Agent 方式、ChatCut 连接设置
   providers.py     Claude / OpenAI 兼容接口：模型列表、结构化输出、工具调用
   chatcut_mcp.py   直连 ChatCut MCP（OAuth / Token）
+  desktop.py       查找并连接本机 ChatCut Desktop（Agent 配置 / 进程端口，HTTP / stdio）
   agent.py         三种执行器（Claude Code / API / 演示）、权限策略、运行与确认
   presets.py       5 个内置风格
   styles.py        风格库：上限 5 个、版本历史、恢复预设、安装

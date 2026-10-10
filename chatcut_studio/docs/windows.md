@@ -60,7 +60,10 @@ winget install -e --id Gyan.FFmpeg
    - **Agent 方式**：
      - 只有 API Key（DeepSeek、通义千问、Kimi、智谱、Claude API）→ 选「API 模型直连 ChatCut」，填 Key，点「获取模型列表」选模型。
      - 已装 Claude Code → 选「Claude Code 插件」，点「体检」，按提示「一键安装插件」，然后在 PowerShell 里运行页面给出的登录命令（`claude mcp login …`）。
-   - **ChatCut 连接**：点「连接」走 OAuth 登录；连接成功后会列出 ChatCut 的全部工具和每个工具的权限策略。
+   - **ChatCut 连接**：
+     - **本机 ChatCut Desktop**（推荐）：先打开 ChatCut Desktop 和一个项目，点「自动查找」，选中「可连接」的那一项，点「保存并连接」。找不到时展开「手动填写」，填 Desktop 的本机地址或启动命令。
+     - **ChatCut 云端**：点「保存并连接」，在弹出的浏览器里登录授权。
+     - 连接成功后会列出 ChatCut 的全部工具和每个工具的权限策略。
 2. **② 常用风格**：选一个风格，改参数或写反馈让 AI 优化；歌词字幕区可以选「JIZURA 动态排版」、换主题、点「生成样张」预览。
 3. **③ 一键剪辑**：选风格、写任务、列素材，交给 Agent；花积分 / 上传 / 删除 / 导出的操作会先弹确认。
 
@@ -90,7 +93,7 @@ chatcut_studio\windows\run.bat
 ### 跑测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（52 个）
+.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（58 个）
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests\test_jizura.py -q -x   # 只测动态排版，遇错即停
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q -k lyrics   # 按名字筛选
 ```

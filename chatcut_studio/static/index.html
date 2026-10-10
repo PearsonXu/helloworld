@@ -115,21 +115,44 @@
   </div>
 
   <div class="card">
-    <h2>ChatCut 连接（API 模型方式）</h2>
-    <p class="sub">本程序直接连接 ChatCut 云端的 MCP 服务（不经过 ChatCut Desktop，不需要重启它）。连接后会列出 ChatCut 提供的全部工具和本程序对每个工具的权限策略。</p>
-    <div class="grid">
+    <h2>ChatCut 连接</h2>
+    <p class="sub">Agent 操作哪里的 ChatCut。连接后会列出 ChatCut 提供的全部工具和本程序对每个工具的权限策略。</p>
+    <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px;margin-bottom:8px">
+      <input type="radio" name="mcp_target" value="desktop" style="margin-top:5px">
+      <span><strong>本机 ChatCut Desktop</strong>：直接编辑 Desktop 里当前打开的项目，素材用本机文件。两种 Agent 方式都可以用。使用前先打开 ChatCut Desktop 和一个项目。</span></label>
+    <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px;margin-bottom:12px">
+      <input type="radio" name="mcp_target" value="cloud" style="margin-top:5px">
+      <span><strong>ChatCut 云端</strong>：编辑网页版里的项目。API 模型方式由本程序登录连接；Claude Code 方式用官方插件。</span></label>
+
+    <div id="desktopBox">
+      <div class="row">
+        <button class="btn" onclick="findDesktop()">自动查找</button>
+        <span id="desktopMsg" class="muted">会读取本机 Claude Code / Claude Desktop / Codex / Cursor 里 ChatCut Desktop 登记的连接，并查看正在运行的 ChatCut Desktop 监听的端口，逐个试连。</span>
+      </div>
+      <div id="desktopList" style="margin-top:8px"></div>
+      <details style="margin-top:8px"><summary class="muted">手动填写</summary>
+        <div class="grid" style="margin-top:8px">
+          <label>连接方式<select id="dk_transport"><option value="http">本机地址（HTTP）</option><option value="stdio">启动命令（stdio）</option></select></label>
+          <label id="dk_url_wrap" style="grid-column:1/-1">地址<input id="dk_url" placeholder="http://127.0.0.1:端口/路径（在 ChatCut Desktop 的 Agent 设置或日志里能看到）"></label>
+          <label id="dk_cmd_wrap" style="grid-column:1/-1">命令<input id="dk_cmd" placeholder="可执行文件 加参数，例如 chatcut-desktop mcp"></label>
+        </div>
+        <button class="btn small" style="margin-top:8px" onclick="useManual()">用这个</button>
+      </details>
+    </div>
+
+    <div id="cloudBox" class="grid">
       <label style="grid-column:1/-1">MCP 地址<input id="mcp_url"></label>
       <label>认证方式<select id="mcp_auth"><option value="oauth">浏览器登录（OAuth）</option><option value="token">手动填写 Token</option><option value="none">不认证（本地测试服务器）</option></select></label>
       <label id="mcp_token_wrap">Access Token<input id="mcp_token" type="password" placeholder="留空表示不修改"></label>
     </div>
     <div class="row" style="margin-top:10px">
       <button class="btn primary" onclick="mcpConnect()">保存并连接</button>
-      <button class="btn" onclick="mcpLogout()">退出登录</button>
+      <button class="btn" id="mcpLogoutBtn" onclick="mcpLogout()">退出登录</button>
       <span id="mcpMsg" class="muted"></span>
     </div>
     <div id="mcpAuth"></div>
     <div id="mcpTools"></div>
-    <div class="note">浏览器登录的回调地址是 <code id="redirectUri"></code>。ChatCut 是否允许第三方程序这样登录还需要实测；不行的话可以改用 Claude Code 插件方式。没有 ChatCut 账号时，可以运行 <code>python3 -m chatcut_studio.fake_chatcut</code>，把地址改成 <code>http://127.0.0.1:8766/mcp</code>、认证选「不认证」来测试整条链路。</div>
+    <div class="note" id="cloudNote">浏览器登录的回调地址是 <code id="redirectUri"></code>。ChatCut 是否允许第三方程序这样登录还需要实测；不行的话可以改用 Claude Code 插件方式。没有 ChatCut 账号时，可以运行 <code>python3 -m chatcut_studio.fake_chatcut</code>，把地址改成 <code>http://127.0.0.1:8766/mcp</code>、认证选「不认证」来测试整条链路。</div>
   </div>
 
   <div class="card">
@@ -292,9 +315,61 @@ async function loadSettings() {
       </div>
     </div>`).join("");
   $("#mcp_url").value = S.mcp.url; $("#mcp_auth").value = S.mcp.auth;
+  document.querySelectorAll("input[name=mcp_target]").forEach((r) => { r.checked = r.value === S.mcp.target; r.onchange = toggleTarget; });
+  dkChoice = S.mcp.desktop; renderDesktop(); toggleTarget();
   $("#mcp_token").placeholder = S.mcp.has_token ? "已保存（留空不修改）" : "粘贴 access token";
   toggleToken();
   const st = await api("/api/mcp/status"); $("#redirectUri").textContent = st.redirect_uri;
+}
+// ---- 本机 ChatCut Desktop ----
+let dkChoice = null, dkFound = [];
+const mcpTarget = () => (document.querySelector("input[name=mcp_target]:checked") || {}).value || "cloud";
+function toggleTarget() {
+  const d = mcpTarget() === "desktop";
+  $("#desktopBox").style.display = d ? "" : "none";
+  $("#cloudBox").style.display = $("#cloudNote").style.display = $("#mcpLogoutBtn").style.display = d ? "none" : "";
+}
+function epLabel(e) { return e.transport === "http" ? e.url : [e.command, ...(e.args || [])].join(" "); }
+function renderDesktop() {
+  const same = (e) => dkChoice && e.transport === dkChoice.transport && epLabel(e) === epLabel(dkChoice);
+  let rows = dkFound.map((r, i) => `<label style="display:flex;align-items:flex-start;color:var(--ink);font-size:13px;margin:4px 0">
+      <input type="radio" name="dk_pick" value="${i}" ${same(r.endpoint) ? "checked" : ""} style="margin-top:3px">
+      <span><span class="mono">${esc(epLabel(r.endpoint))}</span> ${r.ok ? '<span class="pill ok">可连接</span>' : '<span class="pill warn">连不上</span>'}<br>
+      <span class="muted">${esc(r.endpoint.source)}　${esc(r.message)}</span></span></label>`).join("");
+  if (dkChoice && !dkFound.some((r) => same(r.endpoint)))
+    rows = `<label style="display:flex;color:var(--ink);font-size:13px;margin:4px 0"><input type="radio" name="dk_pick" value="saved" checked>
+      <span>已保存：<span class="mono">${esc(epLabel(dkChoice))}</span> <span class="muted">${esc(dkChoice.source || "")}</span></span></label>` + rows;
+  rows += `<label style="display:flex;color:var(--ink);font-size:13px;margin:4px 0"><input type="radio" name="dk_pick" value="auto" ${dkChoice ? "" : "checked"}>
+      <span>不固定，每次连接时自动查找</span></label>`;
+  $("#desktopList").innerHTML = rows;
+  document.querySelectorAll("input[name=dk_pick]").forEach((r) => r.onchange = () => {
+    if (r.value === "auto") dkChoice = null; else if (r.value !== "saved") dkChoice = dkFound[+r.value].endpoint;
+  });
+}
+async function findDesktop() {
+  $("#desktopMsg").textContent = "查找中…（会逐个试连，约几秒）";
+  try {
+    const r = await api("/api/mcp/desktop/discover");
+    dkFound = r.found;
+    const ok = dkFound.filter((x) => x.ok);
+    if (ok.length && !dkChoice) dkChoice = ok[0].endpoint;
+    $("#desktopMsg").textContent = ok.length ? `找到 ${ok.length} 个可连接的 ChatCut Desktop，选好后点「保存并连接」。`
+      : dkFound.length ? "找到了登记的连接，但现在连不上：请先打开 ChatCut Desktop 和一个项目，再查找一次。"
+      : "没有找到。请确认 ChatCut Desktop 已安装并打开过一次、当前打开了一个项目；仍找不到时用「手动填写」。";
+  } catch (e) { $("#desktopMsg").textContent = e.message; }
+  renderDesktop();
+}
+function toggleDk() { const h = $("#dk_transport").value === "http"; $("#dk_url_wrap").style.display = h ? "" : "none"; $("#dk_cmd_wrap").style.display = h ? "none" : ""; }
+$("#dk_transport").onchange = toggleDk; toggleDk();
+function useManual() {
+  const t = $("#dk_transport").value;
+  if (t === "http") dkChoice = {transport: "http", url: $("#dk_url").value.trim(), source: "手动填写"};
+  else { const parts = $("#dk_cmd").value.trim().match(/"[^"]*"|\S+/g) || [];
+         const un = parts.map((x) => x.replace(/^"|"$/g, ""));
+         dkChoice = {transport: "stdio", command: un[0] || "", args: un.slice(1), source: "手动填写"}; }
+  if (!epLabel(dkChoice)) { dkChoice = null; return; }
+  renderDesktop();
+  $("#desktopMsg").textContent = "已选手动填写的连接，点「保存并连接」试一下。";
 }
 function toggleToken() { $("#mcp_token_wrap").style.display = $("#mcp_auth").value === "token" ? "" : "none"; }
 $("#mcp_auth").onchange = toggleToken;
@@ -327,7 +402,7 @@ async function fetchModels(id) {
 // ChatCut MCP
 let mcpPoll = null;
 async function mcpConnect() {
-  const patch = {mcp: {url: $("#mcp_url").value, auth: $("#mcp_auth").value}};
+  const patch = {mcp: {target: mcpTarget(), url: $("#mcp_url").value, auth: $("#mcp_auth").value, desktop: dkChoice}};
   if ($("#mcp_token").value) patch.mcp.token = $("#mcp_token").value;
   try { await put("/api/settings", patch); $("#mcp_token").value = ""; await post("/api/mcp/connect"); }
   catch (e) { $("#mcpMsg").textContent = e.message; return; }

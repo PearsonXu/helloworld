@@ -142,6 +142,15 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
         async with chatcut_mcp.connect(settings.load().mcp) as client:
             return await chatcut_mcp.list_tools(client)
 
+    @app.get("/api/mcp/desktop/discover")
+    async def desktop_discover():
+        """查找本机 ChatCut Desktop 的 MCP 连接，并逐个试连。"""
+        from . import desktop
+        found = await desktop.discover()
+        for r in found:
+            r["endpoint"] = settings.mask_endpoint(r["endpoint"])
+        return {"found": found, "searched": [f"{n}：{p}" for n, p, _ in desktop.config_files()]}
+
     @app.post("/api/mcp/connect")
     async def mcp_connect():
         """连接并列出工具。OAuth 方式下如果还没登录，会进入浏览器授权流程（前端轮询 status 拿 auth_url）。"""

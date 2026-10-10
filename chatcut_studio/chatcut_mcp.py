@@ -15,11 +15,13 @@ import webbrowser
 from contextlib import asynccontextmanager
 
 from mcp import Client
+from mcp.client.stdio import StdioServerParameters, get_default_environment
 from mcp.client.auth import OAuthClientProvider
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.shared.auth import AuthorizationCodeResult, OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 
+from .desktop import Endpoint
 from .settings import DATA_ROOT, McpConfig
 
 PORT = int(os.environ.get("PORT", "8765"))
@@ -114,7 +116,33 @@ def _auth(cfg: McpConfig, storage: FileTokenStorage):
 
 
 @asynccontextmanager
+async def open_endpoint(e: Endpoint):
+    """连本机端点（ChatCut Desktop）：HTTP 地址，或启动一个 stdio MCP 程序。本机连接不走 OAuth。"""
+    if e.transport == "stdio":
+        params = StdioServerParameters(command=e.command, args=e.args, env={**get_default_environment(), **e.env} if e.env else None)
+        async with Client(params) as client:
+            yield client
+        return
+    http = create_mcp_http_client(headers=e.headers or None)
+    async with http, Client(streamable_http_client(e.url, http_client=http)) as client:
+        yield client
+
+
+class DesktopNotFound(RuntimeError):
+    pass
+
+
+@asynccontextmanager
 async def connect(cfg: McpConfig, storage: FileTokenStorage | None = None):
+    if cfg.target == "desktop":
+        from . import desktop
+        e = cfg.desktop or await desktop.first_working()
+        if not e:
+            raise DesktopNotFound("没有找到 ChatCut Desktop 的本机连接：请先打开 ChatCut Desktop 和一个项目，"
+                                  "再在「连接设置」里点「自动查找」，或手动填写地址 / 命令")
+        async with open_endpoint(e) as client:
+            yield client
+        return
     storage = storage or FileTokenStorage()
     headers = {"Authorization": f"Bearer {cfg.token}"} if cfg.auth == "token" and cfg.token else None
     http = create_mcp_http_client(headers=headers, auth=_auth(cfg, storage))

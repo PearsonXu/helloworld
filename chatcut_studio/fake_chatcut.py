@@ -56,6 +56,11 @@ def export_video(format: str = "mp4", resolution: str = "1080x1920") -> str:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if "--stdio" in sys.argv:          # 模拟以 stdio 方式登记的本机 ChatCut Desktop
+        server.run("stdio")
+        raise SystemExit
     import uvicorn
 
     uvicorn.run(server.streamable_http_app(), host="127.0.0.1", port=int(os.environ.get("FAKE_CHATCUT_PORT", "8766")))

@@ -48,6 +48,8 @@ def build_prompt(task: str, assets: str, skill_md: str) -> str:
     return "\n\n".join(parts)
 
 
+DESKTOP_SERVER = "chatcut_desktop"   # Claude Code 方式下本机 Desktop 端点的名字 → 工具名 mcp__chatcut_desktop__*
+
 SYSTEM_PROMPT = """你是 ChatCut 视频剪辑助手，只能通过提供的 ChatCut 工具操作用户的剪辑项目。
 - 先读取项目和时间线，弄清现状再动手；每完成一个大步骤，用读取/校验类工具确认改动生效。
 - 严格遵守用户给出的风格 Skill；Skill 没写到的保持 ChatCut 默认。
@@ -125,7 +127,22 @@ async def sdk_runner(run: Run) -> None:
             return PermissionResultAllow()
         return PermissionResultDeny(message="用户或策略拒绝了这个操作，请换一种不需要它的做法，或停下来向用户说明。")
 
+    # 连本机 ChatCut Desktop 时：把找到的本机端点直接交给 Claude Code，并说明只用它（不用云端插件）
+    from . import desktop, settings
+    extra = {}
+    s = settings.load()
+    if s.mcp.target == "desktop":
+        e = s.mcp.desktop or await desktop.first_working()
+        if not e:
+            raise RuntimeError("没有找到 ChatCut Desktop 的本机连接：请先打开 ChatCut Desktop 和一个项目，再在「连接设置」里点「自动查找」")
+        await run.emit({"type": "text", "text": f"连接本机 ChatCut Desktop：{e.label()}"})
+        extra = {"mcp_servers": {DESKTOP_SERVER: e.sdk_config()},
+                 "system_prompt": {"type": "preset", "preset": "claude_code",
+                                   "append": f"只用 mcp__{DESKTOP_SERVER}__ 开头的工具操作 ChatCut Desktop 里当前打开的项目，"
+                                             "不要用其他 ChatCut 插件或云端项目。"}}
+
     options = ClaudeAgentOptions(
+        **extra,
         model=MODEL,
         effort="high",
         permission_mode="default",
