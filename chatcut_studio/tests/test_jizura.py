@@ -36,8 +36,8 @@ def run_js(js, arg=None):
 
 def test_vendored_source_and_license():
     root = jizura.SRC_DIR.parent
-    assert "MIT License" in (root / "LICENSE").read_text()
-    assert "852wa/JIZURA" in (root / "UPSTREAM.md").read_text()
+    assert "MIT License" in (root / "LICENSE").read_text("utf-8")
+    assert "852wa/JIZURA" in (root / "UPSTREAM.md").read_text("utf-8")
     assert len(list(jizura.SRC_DIR.glob("*.js"))) > 30
 
 
@@ -124,7 +124,7 @@ def test_render_video_and_overlay(tmp_path):
     out, info = asyncio.run(jizura.render(lines, Jizura(theme="叠字国潮", seed=4), tmp_path / "v", bgs, None, 0.25))
     assert out.suffix == ".mp4" and out.stat().st_size > 10_000 and not info.get("warnings")
     assert info["frames"] == pytest.approx(info["duration"] * 12, abs=2)  # 一拍两：每秒只渲染 12 张不重复的画面
-    assert json.loads(out.with_suffix(".plan.json").read_text())["cuts"]
+    assert json.loads(out.with_suffix(".plan.json").read_text("utf-8"))["cuts"]
     mov, _ = asyncio.run(jizura.render(lines[:1], Jizura(theme="清新诗意"), tmp_path / "o", None, None, 0.2, overlay=True))
     fmt = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=pix_fmt", "-of", "csv=p=0", str(mov)],
                          capture_output=True, text=True).stdout

@@ -246,7 +246,7 @@ def _ass_filter(ass_path: Path) -> str:
 
 
 def _run(cmd: list[str], timeout: int) -> None:
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if p.returncode != 0:
         raise RenderError("ffmpeg 失败：" + p.stderr.strip()[-800:])
 
@@ -264,8 +264,8 @@ def background_input(lines: list[Line], bgs: list[Path], duration: float, w: int
     cuts = background_schedule(lines, bgs) + [duration]
     listing = out.with_suffix(".bg.txt")
     listing.write_text("".join(
-        f"file '{Path(b).resolve()}'\nduration {max(0.1, cuts[i + 1] - cuts[i]):.3f}\n" for i, b in enumerate(bgs))
-        + f"file '{Path(bgs[-1]).resolve()}'\n", "utf-8")
+        f"file '{Path(b).resolve().as_posix()}'\nduration {max(0.1, cuts[i + 1] - cuts[i]):.3f}\n" for i, b in enumerate(bgs))
+        + f"file '{Path(bgs[-1]).resolve().as_posix()}'\n", "utf-8")
     return ["-f", "concat", "-safe", "0", "-i", str(listing)]
 
 

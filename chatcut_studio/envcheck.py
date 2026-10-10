@@ -31,10 +31,12 @@ LOGIN_COMMANDS = {
 
 
 def run(cmd: list[str], timeout: int = 60) -> dict:
-    if not shutil.which(cmd[0]):
+    exe = shutil.which(cmd[0])
+    if not exe:
         return {"cmd": " ".join(cmd), "ok": False, "output": f"找不到命令 {cmd[0]}"}
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    try:   # 用 which 找到的完整路径：Windows 上 npm 装的是 claude.cmd，直接写 "claude" 启动不了
+        p = subprocess.run([exe, *cmd[1:]], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=timeout)
         return {"cmd": " ".join(cmd), "ok": p.returncode == 0, "output": (p.stdout + p.stderr).strip()[-4000:]}
     except subprocess.TimeoutExpired:
         return {"cmd": " ".join(cmd), "ok": False, "output": f"超时（{timeout}s）"}

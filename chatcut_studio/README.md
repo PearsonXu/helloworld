@@ -28,6 +28,8 @@ pip install -r chatcut_studio/requirements.txt
 python3 -m chatcut_studio            # 打开 http://127.0.0.1:8765
 ```
 
+**Windows**：运行 `powershell -ExecutionPolicy Bypass -File chatcut_studio\windows\setup.ps1` 一键安装，双击 `chatcut_studio\windows\run.bat` 启动。详细的安装、设置、调试步骤见 [docs/windows.md](docs/windows.md)。
+
 没有 ChatCut 账号、也不想花钱时，可以这样体验：
 
 ```bash
