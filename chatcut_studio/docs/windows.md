@@ -38,6 +38,14 @@ py -3 -m venv .venv
 winget install -e --id Gyan.FFmpeg
 ```
 
+### 3. 歌曲工坊的人声分离（可选，约 3 GB）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File chatcut_studio\windows\setup.ps1 -Audio
+```
+
+装 CUDA 版 PyTorch 和 audio-separator（UVR 同款模型），最后会显示「显卡可用：True NVIDIA GeForce GTX 1660…」。显示 False 时会用 CPU 分离，一首歌要几分钟。第一次分离会下载模型（BS-Roformer 约 600 MB）。
+
 ## 二、启动
 
 双击 `chatcut_studio\windows\run.bat`，浏览器会打开 <http://127.0.0.1:8765>。
@@ -66,6 +74,7 @@ winget install -e --id Gyan.FFmpeg
      - **ChatCut 云端**：点「保存并连接」，在弹出的浏览器里登录授权。
      - 连接成功后会列出 ChatCut 的全部工具和每个工具的权限策略。
 2. **② 常用风格**：选一个风格，改参数或写反馈让 AI 优化；歌词字幕区可以选「JIZURA 动态排版」、换主题、点「生成样张」预览。
+4. **🎵 歌曲工坊**：选原曲 mp4 →「导入」→「开始分离」→ 看建议降几度，试听降 2–6 各档 →「导出降 N」→ 打开 `02_降调` 把混音 mp3 传 Suno → 成品放进 `03_Suno成品` → 粘贴歌词，「用 DeepSeek 生成配图提示词」→ 出好的图放进 `05_配图`。整个歌曲文件夹就是素材包。
 3. **③ 一键剪辑**：选风格、写任务、列素材，交给 Agent；花积分 / 上传 / 删除 / 导出的操作会先弹确认。
 
 Key 也可以用环境变量提供（不写进文件）：
@@ -94,7 +103,7 @@ chatcut_studio\windows\run.bat
 ### 跑测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（68 个）
+.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（72 个）
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests\test_jizura.py -q -x   # 只测动态排版，遇错即停
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q -k lyrics   # 按名字筛选
 ```

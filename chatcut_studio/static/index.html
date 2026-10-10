@@ -81,17 +81,34 @@
 <body>
 <header>
   <h1>ChatCut Studio</h1>
-  <p>连接好模型，选一个常用风格，交给 Agent 在 ChatCut 里剪。</p>
+  <p>歌曲工坊：原曲 → 分离人声 → 降调 → 素材文件夹；也可以连接模型，交给 Agent 在 ChatCut 里剪。</p>
 </header>
 <nav>
-  <button data-tab="conn" class="on">① 连接设置</button>
+  <button data-tab="songs" class="on">🎵 歌曲工坊</button>
+  <button data-tab="conn">① 连接设置</button>
   <button data-tab="styles">② 常用风格</button>
   <button data-tab="run">③ 一键剪辑</button>
 </nav>
 <main>
 
+<!-- 🎵 歌曲工坊 -->
+<section id="songs" class="on">
+  <div class="card">
+    <h2>新建一首歌</h2>
+    <p class="sub">选原曲（mp4 视频或 mp3 / wav 等音频），会在 <code id="songRoot"></code> 下建一个文件夹，所有素材按步骤放在里面。</p>
+    <div class="grid">
+      <label>歌名<input id="newSongName" placeholder="留空用文件名"></label>
+      <label>原曲文件<input id="newSongFile" type="file" accept="video/*,audio/*"></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" onclick="songCreate()">导入</button>
+      <span id="newSongMsg" class="muted"></span></div>
+    <div id="songList" class="row" style="margin-top:10px;flex-wrap:wrap"></div>
+  </div>
+  <div id="songDetail"></div>
+</section>
+
 <!-- ① 连接设置 -->
-<section id="conn" class="on">
+<section id="conn">
   <div class="card">
     <h2>剪辑 Agent 用什么驱动</h2>
     <p class="sub">两种方式二选一，随时可以切换。</p>
@@ -319,9 +336,129 @@ function switchTab(id) {
   document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x.dataset.tab === id));
   document.querySelectorAll("section").forEach((s) => s.classList.toggle("on", s.id === id));
   if (id === "styles") loadStyles();
+  if (id === "songs") loadSongs();
   if (id === "run") loadRunTab();
 }
 document.querySelectorAll("nav button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+
+// ================= 🎵 歌曲工坊 =================
+let SONGS = null, song = null, songPoll = null, songTrack = "mix", songFormant = true;
+const enc = encodeURIComponent;
+async function loadSongs(open) {
+  SONGS = await api("/api/songs");
+  $("#songRoot").textContent = SONGS.root;
+  $("#songList").innerHTML = SONGS.songs.map((x) => `<button class="btn small" data-song="${esc(x.name)}">${esc(x.name)} · ${esc(x.stage)}</button>`).join("") || '<span class="muted">还没有歌曲</span>';
+  document.querySelectorAll("#songList button").forEach((b) => b.onclick = () => openSong(b.dataset.song));
+  const target = open || (song && song.name) || (SONGS.songs[0] && SONGS.songs[0].name);
+  if (target) openSong(target);
+}
+async function songCreate() {
+  const f = $("#newSongFile").files[0];
+  if (!f) { $("#newSongMsg").textContent = "先选原曲文件"; return; }
+  const name = $("#newSongName").value.trim() || f.name.replace(/\.[^.]+$/, "");
+  $("#newSongMsg").textContent = `上传并提取音频中…（${(f.size / 1048576).toFixed(0)} MB）`;
+  try {
+    const r = await fetch(`/api/songs?name=${enc(name)}`, {method: "POST", body: f, headers: {"X-Filename": enc(f.name)}});
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const s = await r.json();
+    $("#newSongMsg").textContent = "已导入"; $("#newSongFile").value = ""; $("#newSongName").value = "";
+    await loadSongs(s.name);
+  } catch (e) { $("#newSongMsg").textContent = e.message; }
+}
+const songFile = (sub, f) => `/api/songs/${enc(song.name)}/file?path=${enc(sub + "/" + f)}`;
+async function openSong(name) {
+  song = await api(`/api/songs/${enc(name)}`);
+  document.querySelectorAll("#songList button").forEach((b) => b.classList.toggle("primary", b.dataset.song === song.name));
+  renderSong();
+  clearInterval(songPoll);
+  if (song.job && song.job.status === "running") songPoll = setInterval(pollSong, 1500);
+}
+async function pollSong() {
+  const s = await api(`/api/songs/${enc(song.name)}`);
+  song = s;
+  if (!s.job || s.job.status !== "running") { clearInterval(songPoll); renderSong(); loadSongs(s.name); return; }
+  const j = $("#songJob"); if (j) j.innerHTML = jobHtml(s.job); else renderSong();
+}
+function jobHtml(j) {
+  if (!j) return "";
+  const cls = j.status === "error" ? "fail" : j.status === "done" ? "ok" : "warn";
+  return `<span class="pill ${cls}">${j.status === "running" ? "进行中" : j.status === "done" ? "完成" : "出错"}</span> ${esc(j.message || "")}`
+    + (j.status === "running" ? ` <progress max="100" value="${j.progress || 0}" style="width:160px;vertical-align:middle"></progress> ${j.progress || 0}%` : "");
+}
+function step(n, title, done, body) {
+  return `<div class="card"><h2>${done ? "✓" : n} ${title}</h2>${body}</div>`;
+}
+function renderSong() {
+  const s = song, a = s.analysis, D = s.dirs, models = SONGS ? SONGS.models : {};
+  const audio = (src) => `<audio controls preload="none" src="${src}" style="width:100%;max-width:420px"></audio>`;
+  const shifts = (SONGS && SONGS.preview_shifts) || [0, -2, -3, -4, -5, -6];
+  const sug = a ? a.suggest : -4;
+  let html = `<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">${esc(s.name)}</h2>
+      <button class="btn" onclick="songOpen('')">打开素材文件夹</button></div>
+      <div class="muted mono" style="font-size:12px;margin-top:4px">${esc(s.dir)}</div><div id="songJob" style="margin-top:6px">${jobHtml(s.job)}</div></div>`;
+  html += step(1, "原曲", s.has_audio, audio(songFile(D.src, "原曲.wav")));
+  html += step(2, "分离人声 / 伴奏", s.has_stems, (SONGS && !SONGS.separator ? `<div class="note">${esc(SONGS.separator_hint)}</div>` : "") +
+    `<div class="row"><select id="sepModel">${Object.entries(models).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("")}</select>
+     <button class="btn ${s.has_stems ? "" : "primary"}" onclick="songSeparate()">${s.has_stems ? "重新分离" : "开始分离"}</button></div>` +
+    (s.has_stems ? `<div class="grid" style="margin-top:8px"><label>人声${audio(songFile(D.stems, "人声.wav"))}</label><label>伴奏${audio(songFile(D.stems, "伴奏.wav"))}</label></div>` : ""));
+  html += step(3, "降调（女声 → 男声）", s.exports.length > 0,
+    (a ? `<div class="note">原曲调性约 <strong>${esc(a.key)}</strong>${a.key_after ? ` → 降调后 <strong>${esc(a.key_after)}</strong>` : ""}；原唱人声 ${esc(a.low_note)}–${esc(a.high_note)}（中位 ${esc(a.mid_note)}）。<br>建议：<strong>${a.suggest === 0 ? "不用降" : "降 " + (-a.suggest) + " 个半音"}</strong>。${esc(a.advice)}</div>`
+       : `<div class="note">分离人声后会自动分析原唱音域，给出建议降几度。女转男一般降 4–5 个半音。</div>`) +
+    `<div class="row" style="margin-top:8px">试听：
+       <label style="display:inline-flex;align-items:center;color:var(--ink)"><input type="radio" name="ptrack" ${songTrack === "mix" ? "checked" : ""} onchange="songTrack='mix';renderSong()">整首</label>
+       <label style="display:inline-flex;align-items:center;color:var(--ink)"><input type="radio" name="ptrack" ${songTrack === "vocals" ? "checked" : ""} ${s.has_stems ? "" : "disabled"} onchange="songTrack='vocals';renderSong()">只听人声</label>
+       <label style="display:inline-flex;align-items:center;color:var(--ink)"><input type="checkbox" ${songFormant ? "checked" : ""} onchange="songFormant=this.checked;renderSong()">保留共振峰（人声更自然，推荐）</label></div>
+     <div style="margin-top:6px">${shifts.map((n) => `<div class="row" style="margin:6px 0;flex-wrap:wrap">
+       <span style="width:92px;white-space:nowrap">${n === 0 ? "原调" : "降 " + (-n)}${n === sug && n !== 0 ? ' <span class="pill ok">建议</span>' : ""}</span>
+       <audio controls preload="none" src="/api/songs/${enc(s.name)}/preview?shift=${n}&track=${songTrack}&formant=${songFormant ? 1 : 0}" style="width:320px;max-width:100%"></audio>
+       ${n === 0 ? "" : `<button class="btn small ${n === sug ? "primary" : ""}" onclick="songExport(${n})">导出降 ${-n}</button>`}</div>`).join("")}</div>
+     <div class="row" style="margin-top:6px">其他：<input id="customShift" type="number" min="-12" max="12" value="${sug}" style="width:80px"> 个半音（负数 = 降）
+       <button class="btn small" onclick="songExport(+$('#customShift').value)">导出</button></div>
+     <div class="muted" style="font-size:12px">试听的是人声最饱满的 30 秒（多半是副歌），点播放时现算几秒。导出：混音（mp3 + wav，传 Suno 用）、人声、伴奏，速度不变。</div>` +
+    (s.exports.length ? `<div style="margin-top:8px"><strong>已导出（${esc(D.shift)}）</strong>${s.exports.map((f) => `<div class="row"><span class="mono">${esc(f)}</span>${f.endsWith(".mp3") ? audio(songFile(D.shift, f)) : ""}</div>`).join("")}
+       <button class="btn small" onclick="songOpen('${D.shift}')">打开降调文件夹</button></div>` : ""));
+  html += step(4, "Suno 改编（手动）", s.suno.length > 0,
+    `<div class="note">把 <code>${esc(D.shift)}</code> 里的混音 mp3 用你的辅助软件传到 Suno 改编。下载的成品放进 <code>${esc(D.suno)}</code>，回来点「刷新」。</div>
+     <div class="row"><button class="btn" onclick="songOpen('${D.shift}')">打开降调文件夹</button><button class="btn" onclick="songOpen('${D.suno}')">打开 Suno 成品文件夹</button>
+       <button class="btn" onclick="openSong(song.name)">刷新</button></div>` +
+    s.suno.map((f) => `<div class="row"><span class="mono">${esc(f)}</span>${audio(songFile(D.suno, f))}</div>`).join(""));
+  html += step(5, "歌词 → 配图提示词", s.images.length > 0,
+    `<label>歌词（Suno 改编后的版本，一行一句）<textarea id="songLyrics" style="min-height:140px">${esc(s.lyrics)}</textarea></label>
+     <div class="grid" style="margin-top:6px"><label>画面风格<input id="songStyle" value="清新、电影感的新中式风景插画，自然光，低饱和"></label>
+       <label>张数<select id="songCount"><option>3</option><option selected>4</option><option>5</option></select></label></div>
+     <div class="row" style="margin-top:8px"><button class="btn" onclick="songSaveLyrics()">保存歌词</button>
+       <button class="btn primary" onclick="songPrompts()">用 DeepSeek 生成配图提示词</button><span id="promptMsg" class="muted"></span></div>
+     ${s.prompts ? `<details open style="margin-top:8px"><summary>配图提示词（已保存到 ${esc(D.images)}/配图提示词.md）</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(s.prompts)}</pre></details>` : ""}
+     <div class="note">用提示词在你常用的出图工具里出图（9:16 竖版），把图放进 <code>${esc(D.images)}</code>。</div>
+     <div class="row"><button class="btn" onclick="songOpen('${D.images}')">打开配图文件夹</button><button class="btn" onclick="openSong(song.name)">刷新</button></div>
+     <div class="row" style="flex-wrap:wrap">${s.images.map((f) => `<img src="${songFile(D.images, f)}" style="height:160px;border-radius:6px">`).join("")}</div>`);
+  html += `<div class="card"><h2>素材文件夹</h2><p class="sub">整个文件夹就是交给 ChatCut 的素材包，里面的「素材清单.txt」列出了每一步的文件和调性信息。</p>
+    <button class="btn primary" onclick="songOpen('')">打开素材文件夹</button></div>`;
+  $("#songDetail").innerHTML = html;
+  const m = $("#sepModel"); if (m && SONGS) m.value = SONGS.default_model;
+}
+async function songSeparate() {
+  await post(`/api/songs/${enc(song.name)}/separate`, {model: $("#sepModel").value});
+  song.job = {status: "running", message: "启动中…", progress: 0}; $("#songJob").innerHTML = jobHtml(song.job);
+  clearInterval(songPoll); songPoll = setInterval(pollSong, 1500);
+}
+async function songExport(n) {
+  if (!n) return;
+  await post(`/api/songs/${enc(song.name)}/export`, {shift: n, formant: songFormant});
+  song.job = {status: "running", message: `导出降 ${-n} …`, progress: 0}; $("#songJob").innerHTML = jobHtml(song.job);
+  window.scrollTo({top: 0, behavior: "smooth"});
+  clearInterval(songPoll); songPoll = setInterval(pollSong, 1500);
+}
+async function songOpen(sub) { try { await post(`/api/songs/${enc(song.name)}/open`, {sub}); } catch (e) { alert(e.message); } }
+async function songSaveLyrics() {
+  await put(`/api/songs/${enc(song.name)}/lyrics`, {text: $("#songLyrics").value}); $("#promptMsg").textContent = "歌词已保存";
+}
+async function songPrompts() {
+  $("#promptMsg").textContent = "DeepSeek 正在读歌词、设计画面…";
+  try { await songSaveLyrics(); await post(`/api/songs/${enc(song.name)}/prompts`, {style: $("#songStyle").value, count: +$("#songCount").value});
+        await openSong(song.name); $("#promptMsg").textContent = "已生成"; }
+  catch (e) { $("#promptMsg").textContent = e.message; }
+}
 
 // ================= ① 连接设置 =================
 async function loadSettings() {
@@ -754,6 +891,7 @@ async function lyricRender() {
 // ================= 启动 =================
 renderForm();
 loadSettings();
+loadSongs();
 loadBackgrounds();
 loadJizuraMeta();
 </script>

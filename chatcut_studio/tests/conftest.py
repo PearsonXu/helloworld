@@ -18,7 +18,9 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setattr(chatcut_mcp, "DATA_ROOT", tmp_path)
     monkeypatch.setattr(styles, "DATA_DIR", tmp_path / "styles")
     monkeypatch.setattr(styles, "CLAUDE_SKILLS_DIR", tmp_path / "skills")
-    monkeypatch.setenv("CHATCUT_STUDIO_HOME", str(tmp_path / "home"))   # 查找 ChatCut Desktop 时不读真实的 Agent 配置
+    monkeypatch.setenv("CHATCUT_STUDIO_HOME", str(tmp_path / "home"))
+    from chatcut_studio import songlab
+    monkeypatch.setattr(songlab, "SONGS_ROOT", tmp_path / "songs")   # 查找 ChatCut Desktop 时不读真实的 Agent 配置
     from chatcut_studio import desktop
     monkeypatch.setattr(desktop, "from_processes", lambda: [])
     for k in ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY", "ZHIPUAI_API_KEY",

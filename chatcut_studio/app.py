@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 import json
 import uuid
 from pathlib import Path
@@ -10,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import chatcut_mcp, envcheck, gateway, jizura, lyrics, optimize, settings, styles
+from . import chatcut_mcp, envcheck, gateway, jizura, lyrics, optimize, settings, songlab, styles
 from .agent import RunManager, build_prompt, classify
 from .presets import MAX_STYLES
 from .profile import StyleProfile, render_skill_md
@@ -144,6 +145,104 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     async def _tools() -> list[dict]:
         async with chatcut_mcp.connect(settings.load().mcp) as client:
             return await chatcut_mcp.list_tools(client)
+
+    # ---------- 歌曲工坊：原曲 → 人声分离 → 降调 → 素材文件夹 ----------
+    def _song_err(e: Exception):
+        raise HTTPException(400, str(e))
+
+    @app.get("/api/songs")
+    def songs_list():
+        ok, why = songlab.separator_ready()
+        return {"songs": songlab.list_songs(), "root": str(songlab.SONGS_ROOT), "separator": ok, "separator_hint": why,
+                "models": songlab.MODELS, "default_model": songlab.DEFAULT_MODEL, "preview_shifts": songlab.PREVIEW_SHIFTS}
+
+    @app.post("/api/songs")
+    async def songs_create(req: Request, name: str):
+        """原曲文件直接作为请求体上传（不需要表单库），文件名放在 X-Filename 头里。"""
+        import tempfile
+        from urllib.parse import unquote
+        fn = unquote(req.headers.get("x-filename") or "原曲.mp4")
+        suffix = Path(fn).suffix.lower() or ".mp4"
+        tmp = Path(tempfile.mkdtemp()) / ("upload" + suffix)
+        with open(tmp, "wb") as f:
+            async for chunk in req.stream():
+                f.write(chunk)
+        try:
+            return await asyncio.to_thread(songlab.create, name or Path(fn).stem, tmp)
+        except songlab.SongError as e:
+            _song_err(e)
+        finally:
+            shutil.rmtree(tmp.parent, ignore_errors=True)
+
+    @app.get("/api/songs/{name}")
+    def songs_info(name: str):
+        try:
+            return songlab.info(name)
+        except songlab.SongError as e:
+            raise HTTPException(404, str(e))
+
+    @app.post("/api/songs/{name}/separate")
+    async def songs_separate(name: str, body: dict | None = None):
+        job = songlab.JOBS.get(songlab.safe_name(name))
+        if job and job["status"] == "running":
+            return {"started": False}
+        asyncio.get_running_loop().create_task(songlab.separate(name, (body or {}).get("model") or songlab.DEFAULT_MODEL))
+        return {"started": True}
+
+    @app.post("/api/songs/{name}/analyze")
+    async def songs_analyze(name: str):
+        try:
+            return await asyncio.to_thread(songlab.analyze, name)
+        except (songlab.SongError, OSError) as e:
+            _song_err(e)
+
+    @app.get("/api/songs/{name}/preview")
+    async def songs_preview(name: str, shift: int = 0, track: str = "mix", formant: int = 1, start: float | None = None):
+        if track not in ("mix", "vocals", "inst") or not -12 <= shift <= 12:
+            raise HTTPException(400, "参数不对")
+        try:
+            return FileResponse(await asyncio.to_thread(songlab.preview, name, shift, track, bool(formant), start), media_type="audio/mpeg")
+        except songlab.SongError as e:
+            _song_err(e)
+
+    @app.post("/api/songs/{name}/export")
+    async def songs_export(name: str, body: dict):
+        shift = int(body.get("shift", 0))
+        if not -12 <= shift <= 12:
+            raise HTTPException(400, "降调范围是 -12 到 12")
+        asyncio.get_running_loop().create_task(songlab.export_job(name, shift, bool(body.get("formant", True))))
+        return {"started": True}
+
+    @app.put("/api/songs/{name}/lyrics")
+    def songs_lyrics(name: str, body: dict):
+        try:
+            songlab.save_lyrics(name, body.get("text", ""))
+            return {"ok": True}
+        except songlab.SongError as e:
+            _song_err(e)
+
+    @app.post("/api/songs/{name}/prompts")
+    async def songs_prompts(name: str, body: dict):
+        try:
+            return {"markdown": await songlab.make_prompts(name, body.get("style") or "清新、电影感的新中式风景插画", int(body.get("count", 4)))}
+        except (songlab.SongError, ProviderError, KeyError) as e:
+            _song_err(e)
+
+    @app.post("/api/songs/{name}/open")
+    def songs_open(name: str, body: dict | None = None):
+        try:
+            songlab.open_folder(name, (body or {}).get("sub", ""))
+            return {"ok": True}
+        except (songlab.SongError, OSError) as e:
+            _song_err(e)
+
+    @app.get("/api/songs/{name}/file")
+    def songs_file(name: str, path: str):
+        d = songlab.song_dir(name).resolve()
+        f = (d / path).resolve()
+        if d not in f.parents or not f.is_file():
+            raise HTTPException(404, "没有这个文件")
+        return FileResponse(f)
 
     # ---------- 本机模型网关：Claude Code / ChatCut Desktop 用 Studio 里的模型 ----------
     @app.post("/gateway/v1/messages")

@@ -1,6 +1,9 @@
 ﻿# ChatCut Studio：Windows 一键安装
 # 在仓库根目录（helloworld）的 PowerShell 里运行：
 #   powershell -ExecutionPolicy Bypass -File chatcut_studio\windows\setup.ps1
+#   加 -Audio 同时安装「歌曲工坊」的人声分离组件（NVIDIA 显卡加速，约 3 GB）：
+#   powershell -ExecutionPolicy Bypass -File chatcut_studio\windows\setup.ps1 -Audio
+param([switch]$Audio)
 $ErrorActionPreference = "Stop"
 $Root = Resolve-Path "$PSScriptRoot\..\.."
 Set-Location $Root
@@ -39,6 +42,19 @@ Write-Host "== 5/5 可选：Claude Code（只有用「Claude Code 插件」方�
 if (Has "claude") { & claude --version } else {
     Write-Host "未安装 Claude Code。只用 DeepSeek 等「API 模型直连」可以跳过；需要时在 PowerShell 运行："
     Write-Host "  irm https://claude.ai/install.ps1 | iex"
+}
+
+if ($Audio) {
+    Write-Host "== 人声分离组件：PyTorch（CUDA 版，给 NVIDIA 显卡用）+ audio-separator（UVR 同款模型）"
+    & .\.venv\Scripts\python.exe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "从 pytorch.org 下载失败，改用阿里云镜像……"
+        & .\.venv\Scripts\python.exe -m pip install torch torchaudio -f https://mirrors.aliyun.com/pytorch-wheels/cu124/
+    }
+    & .\.venv\Scripts\python.exe -m pip install "audio-separator[gpu]"
+    & .\.venv\Scripts\python.exe -c "import torch; print('显卡可用：', torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else '（没检测到，会用 CPU，慢一些）')"
+} else {
+    Write-Host "（没装人声分离组件；需要时加 -Audio 再运行一次本脚本）"
 }
 
 Write-Host ""

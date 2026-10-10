@@ -39,7 +39,23 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（68 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（72 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+
+## 🎵 歌曲工坊（`songlab.py`）
+
+把「原曲 → 提取人声 → 降调 → 传 Suno → 歌词配图 → 交给 ChatCut」整理成一个页面，最后得到一个素材文件夹（默认 `~/ChatCutStudio/歌曲/<歌名>/`）：
+
+| 步骤 | 做法 |
+|---|---|
+| 导入 | 选原曲 mp4（或 mp3 / wav），ffmpeg 提取音频 → `00_原曲/` |
+| 分离人声 / 伴奏 | [audio-separator](https://github.com/nomadkaraoke/python-audio-separator)，和 Ultimate Vocal Remover 同一套模型（默认 BS-Roformer，可选 MDX-Net Voc FT），独立进程运行，NVIDIA 显卡加速 → `01_人声分离/` |
+| 分析 | 原唱人声音域（YIN 基频 + 抛物线插值，误差约 0.1 个半音）、调性（Krumhansl 调性轮廓），建议降几度：让常用高音落到 A4 左右（女转男一般 4–5 个半音） |
+| 降调 | 页面上直接试听原调 / 降 2–6 的 30 秒副歌片段（整首或只听人声），和导出用的是同一套 Rubber Band 参数（高音质、保留共振峰，人声更自然）；导出混音 mp3 + wav、人声、伴奏，速度不变 → `02_降调/` |
+| Suno | 手动：用你的辅助软件上传，成品放进 `03_Suno成品/` |
+| 歌词 → 配图提示词 | 粘贴歌词，DeepSeek 按段落写 3–5 个画面（中文描述 + 英文提示词）→ `05_配图/配图提示词.md`，出好的图也放这里 |
+| 素材清单 | `素材清单.txt` 记录每一步的文件和调性信息 |
+
+已用合成的测试歌曲（mp4）跑通整条流程：真实的 audio-separator 分离、音域 / 调性分析、导出降 5 后人声中位音高 444 Hz → 326 Hz（理论 330 Hz）。人声分离组件较大，不在 requirements.txt 里：Windows 运行 `setup.ps1 -Audio` 安装（CUDA 版 PyTorch + `audio-separator[gpu]`）；第一次分离会下载模型（BS-Roformer 约 600 MB）。
 
 ## JIZURA 动态排版（`jizura.py`）
 
@@ -153,6 +169,7 @@ chatcut_studio/
   providers.py     Claude / OpenAI 兼容接口：模型列表、结构化输出、工具调用
   chatcut_mcp.py   直连 ChatCut MCP（OAuth / Token）
   desktop.py       查找并连接本机 ChatCut Desktop（Agent 配置 / 进程端口，HTTP / stdio）
+  songlab.py       歌曲工坊：原曲 → 人声分离 → 降调 → 配图提示词 → 素材文件夹
   gateway.py       本机模型网关：Codex / Claude Code（ChatCut Desktop 里的 Agent）通过它用 DeepSeek
   responses_api.py Responses 接口 ↔ Chat Completions 翻译（给 Codex）
   diagnose.py      诊断 Desktop 里为什么没用上 DeepSeek（环境变量、设置优先级、Desktop 配置、实测）
