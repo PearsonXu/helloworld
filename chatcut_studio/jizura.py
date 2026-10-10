@@ -287,6 +287,27 @@ J.splitLines = (text, maxPer) => {
   }
   // 按词把一句分成 n 段（竖排分列 / 错落分组用）
   const splitN = (text, n) => n <= 1 ? [text] : J.splitLines(text, Math.ceil([...text].length / n)).split('\n');
+  // 关键词：歌词里用 {词} 标出的词（在 JIZURA 里是强调词），按行号查；版式里用 kwIn 取这一镜头里的那个词
+  const kwOf = env => (window.CN_KW && window.CN_KW[env.cut.line | 0]) || [];
+  const kwIn = (env, text) => kwOf(env).filter(w => w !== strip(text)).filter(w => w && strip(text).includes(w)).sort((a, b) => b.length - a.length)[0] || '';
+  const kwMask = (text, words) => {
+    const s = strip(text), m = new Array([...s].length).fill(false);
+    for (const w of words) for (let i = s.indexOf(w); i >= 0; i = s.indexOf(w, i + w.length)) {
+      const st = [...s.slice(0, i)].length; for (let k = 0; k < [...w].length; k++) m[st + k] = true;
+    }
+    return m;
+  };
+  // 所有版式的正文里，关键词的字换成强调色（逐字 charFn，入场 / 出场动画照常）
+  const origMain = J.mainDraw;
+  J.mainDraw = (env, it) => {
+    const words = it.noKw ? [] : kwOf(env);
+    const mask = words.length && typeof it.text === 'string' ? kwMask(it.text, words) : null;
+    if (!mask || !mask.some(Boolean)) return origMain(env, it);
+    if (it.color === env.sc.accent) it.color = env.sc.fg;      // 整句本来就是强调色时，正文退回正常色，只留关键词
+    const col = it.kwColor || env.sc.accent, hi = i => mask[i] ? { color: col } : null, cc = J.combineChar;
+    J.combineChar = fns => cc(fns.concat([hi]));
+    try { return origMain(env, it); } finally { J.combineChar = cc; }
+  };
   const reg = (key, def) => J.register('layout', key, Object.assign({ w: 1.6, portrait: 1.6, tags: ['calm', 'editorial'] }, def), PK);
 
   /* 诗笺：竖排正文（多列从右往左）+ 一侧发丝线 + 列尾朱印 */
@@ -298,16 +319,20 @@ J.splitLines = (text, maxPer) => {
       const cols = splitN(text, n > 14 ? 3 : n > 7 ? 2 : 1), per = Math.max(...cols.map(c => [...c].length));
       const size = Math.min(H * 0.5 / per, W * (cols.length > 1 ? 0.12 : 0.15));
       const gap = size * 1.55, cx = W * (0.5 + P.side * 0.1), cy = H * P.y, colH = per * size * 1.04;
-      let bb = null;
+      let bb = null, gi = 0;
+      const kw = kwIn(env, text), mask = kwMask(text, kw ? [kw] : []), da = tin(env, 0.45, 0.3) * tout(env);
       cols.forEach((c, i) => {   // 第一列在最右
         const x = cx + ((cols.length - 1) / 2 - i) * gap;
         const top = cy - colH / 2, h = [...c].length * size * 1.04;
         bb = union(bb, J.mainDraw(env, { text: c, font: P.font, size, x, y: top + h / 2, vertical: true, track: 0.04, color: sc.fg, mi: i * 3 }));
+        [...c].forEach((_, j) => {   // 着重号：竖排时点在字的右侧
+          if (mask[gi++] && da > 0.01) env.circle(x + size * 0.7, top + (j + 0.5) * size * 1.04, size * 0.065, sc.accent, null, 0, da, false);
+        });
       });
       const e = tin(env, 0.1, 0.9) * tout(env);
       const lx = cx - P.side * ((cols.length - 1) / 2 * gap + size * 0.95), y0 = cy - colH / 2 - size * 0.4;
       env.line([[lx, y0], [lx, y0 + (colH + size * 1.4) * e]], sc.sub, hair(env), 0.55, false);
-      if (P.seal) seal(env, firstHan(text), cx - P.side * ((cols.length - 1) / 2 * gap) , cy + colH / 2 + size * 0.75, size * 0.48, tin(env, 0.45, 0.35) * tout(env), P.font);
+      if (P.seal || kw) seal(env, firstHan(kw || text), cx - P.side * ((cols.length - 1) / 2 * gap) , cy + colH / 2 + size * 0.75, size * 0.48, tin(env, 0.45, 0.35) * tout(env), P.font);
       return bb;
     },
   });
@@ -320,7 +345,8 @@ J.splitLines = (text, maxPer) => {
       const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text);
       let units = J.chunkText(text).map(strip).filter(Boolean);
       if (units.length < 2) { const a = [...text]; const k = Math.ceil(a.length / 2); units = [a.slice(0, k).join(''), a.slice(k).join('')]; }
-      const head = units[0], rest = units.slice(1).join('');
+      const kw = kwIn(env, text);
+      const head = kw || units[0], rest = kw ? text : units.slice(1).join('');
       const bs = Math.min(W * 0.8 / [...head].length, W * 0.3), ss = Math.min(bs * 0.36, W * 0.82 / Math.max(1, [...rest].length) / 1.2);
       const bw = meas(head, P.big, bs).w, sw = meas(rest, P.small, ss, { track: 0.18 }).w;
       const L = W * 0.1, R = W * 0.9, by = H * P.y, sy = by + bs * 0.78;
@@ -340,7 +366,8 @@ J.splitLines = (text, maxPer) => {
     plan: (rng, cut, st) => ({ font: rng.pick(fo(st, ['display'])), up: rng.pick([1, -1]) }),
     render(env) {
       const { W, H, sc } = env, P = env.cut.params, text = strip(env.cut.text), n = [...text].length;
-      const back = n > 6 ? J.splitLines(text, Math.ceil(n / 2)) : text;
+      const kw = kwIn(env, text);
+      const back = kw || (n > 6 ? J.splitLines(text, Math.ceil(n / 2)) : text);
       const es = J.fitSize(back, P.font, W * 0.94, H * 0.36, { lead: 1.05 }) * (1 + 0.04 * J.clamp(env.lt / Math.max(0.5, env.cut.dur)));
       const front = n > 7 ? J.splitLines(text, Math.ceil(n / 2)) : text;
       const fs = Math.min(es * 0.42, J.fitSize(front, P.font, W * 0.7, H * 0.2, { track: 0.08, lead: 1.25 }));
@@ -374,7 +401,8 @@ J.splitLines = (text, maxPer) => {
       };
       frame(x0, y0, x1, y1, lw * 2.2, 0.75); frame(x0 + g, y0 + g, x1 - g, y1 - g, lw, 0.5);
       const bb = J.mainDraw(env, { text: t, font: P.font, size, x: cx, y: cy, vertical: vert, track: vert ? 0.04 : 0.1, lead: 1.35, color: sc.fg });
-      if (P.seal) seal(env, firstHan(text), x1, y1, size * 0.5, tin(env, 0.7, 0.35) * tout(env), P.font);
+      const kw = kwIn(env, text);
+      if (P.seal || kw) seal(env, firstHan(kw || text), x1, y1, size * 0.5, tin(env, 0.7, 0.35) * tout(env), P.font);
       return bb;
     },
   });
@@ -388,6 +416,8 @@ J.splitLines = (text, maxPer) => {
       const R = W * 0.27, mx = W / 2 + (P.mode === 'v' ? -P.side * W * 0.1 : 0), my = H * 0.36;
       const e = tin(env, 0, 1.2) * tout(env);
       env.circle(mx, my, R * (0.96 + 0.04 * e), sc.fg, null, 0, 0.09 * e, false);
+      const kw = kwIn(env, text);
+      if (kw) env.draw({ text: kw, font: P.font, size: Math.min(R * 1.25 / [...kw].length, R * 0.8), x: mx, y: my, color: sc.accent, alpha: 0.85 * e, ghost: false });
       if (P.ring) env.arc(mx, my, R * 1.08, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * E.inOutCubic(J.clamp(env.lt / 1.4)), sc.sub, hair(env), 0.55 * tout(env), false);
       if (P.mode === 'v' && n <= 9) {
         const size = Math.min(H * 0.46 / n, W * 0.14), h = n * size * 1.04;
@@ -414,10 +444,10 @@ const CN_STYLES = {
                          S('#F3E9D2', '#2B2216', '#6B5A3E', '#A67C2E', '#2B2216', '#E6D9BC', '#B39B6E', '#A67C2E')] },
   cn_qinglv: { name: '青绿山水', fonts: { display: ['brush', 'mincho_black'], serif: ['mincho_bold'], body: ['klee'], mono: ['mono'] },
                schemes: [S('#0F1C1C', '#EEF2E8', '#A9C1B5', '#6DB596', '#8EC0D2', '#1A2C2B', '#4E7F73', '#8EC0D2'),
-                         S('#EEF0E6', '#1F3B3A', '#4F6B66', '#2E7D6B', '#2E6E8E', '#DDE3D6', '#8FB0A4', '#2E6E8E')] },
+                         S('#EEF0E6', '#1F3B3A', '#4F6B66', '#B5452E', '#2E6E8E', '#DDE3D6', '#8FB0A4', '#2E6E8E')] },
   cn_moon:   { name: '月白黛蓝', fonts: { display: ['klee', 'mincho_bold'], serif: ['mincho'], body: ['klee'], mono: ['mono'] },
-               schemes: [S('#101722', '#EAF0F5', '#A9B8C8', '#9CC3D5', '#EAF0F5', '#1B2433', '#5B708A', '#9CC3D5'),
-                         S('#EEF2F5', '#26324A', '#5A6680', '#4A6E98', '#26324A', '#DDE4EB', '#9AA8BC', '#4A6E98')] },
+               schemes: [S('#101722', '#EAF0F5', '#A9B8C8', '#E3BE7A', '#EAF0F5', '#1B2433', '#5B708A', '#9CC3D5'),
+                         S('#EEF2F5', '#26324A', '#5A6680', '#B0623A', '#26324A', '#DDE4EB', '#9AA8BC', '#4A6E98')] },
   cn_rouge:  { name: '胭脂', fonts: { display: ['mincho_black', 'klee'], serif: ['mincho_bold'], body: ['mincho'], mono: ['mono'] },
                schemes: [S('#170D10', '#FBF0EE', '#D9B8B6', '#E2677A', '#F3C9A8', '#2A1519', '#8E4B57', '#E2677A'),
                          S('#F8ECEA', '#3A1A20', '#7A4E55', '#9D2933', '#3A1A20', '#EEDAD6', '#C79AA0', '#9D2933')] },
@@ -482,6 +512,7 @@ window.CS = {
     }
     window.PROJ = p;
     window.PLAN = J.plan(p, audio);
+    window.CN_KW = PLAN.lines.map(l => l.emph || []);      // 每行的关键词，给中式版式用
     const fixedSchemes = fixSchemes(PLAN, a.bgLums);
     await J.ensureFonts(p.lyrics.replace(/\[[^\]]*\]/g, '') + '0123456789', J.fontsOfPlan(PLAN));
     window.R = new J.Renderer();

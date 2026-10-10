@@ -49,6 +49,7 @@ def test_chinese_themes():
     assert "columnsBig" not in jizura.THEMES["叠字国潮"]["allow"]["layout"]      # 大字居中已去掉
     for key in ("cnPoem", "cnStagger", "cnEcho", "cnFrame", "cnMoon"):           # 我们新加的中式版式
         assert f"reg('{key}'" in js and any(key in t["allow"]["layout"] for t in jizura.THEMES.values())
+    assert "window.CN_KW = PLAN.lines.map" in js and "J.mainDraw = (env, it)" in js   # {关键词} 传到版式里突出
     for face in ("dela", "reggae", "potta", "round", "pop", "kiwi", "klee"):  # 卡通 / 日文字体都换成宋、楷、书法
         assert face + ":" in js.replace(" ", "")
 
