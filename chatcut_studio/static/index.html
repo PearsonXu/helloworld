@@ -130,8 +130,10 @@
       <button class="btn" onclick="gwTest()">测试 DeepSeek</button>
       <button class="btn primary" id="gwLinkBtn" onclick="gwLink(true)">接入 Claude Code</button>
       <button class="btn" id="gwUnlinkBtn" onclick="gwLink(false)">断开，恢复原设置</button>
+      <button class="btn" onclick="gwDiagnose()">诊断：Desktop 里为什么不是 DeepSeek</button>
       <span id="gwMsg" class="muted"></span>
     </div>
+    <div id="gwDiag"></div>
     <div class="note">用法：① 在上面填好 DeepSeek 的 Key 和模型 → ② 点「测试 DeepSeek」→ ③ 点「接入 Claude Code」→ ④ 在 ChatCut Desktop 里新开一个对话（没生效就重启 Desktop），AI 输入框选「Claude Code」。<br>
       注意：接入期间本机所有 Claude Code 会话都会用 DeepSeek，而且 Studio 要保持运行；点「断开」恢复原来的设置。本机需要已安装 Claude Code（Desktop 检测到它才会出现这个选项）。</div>
   </div>
@@ -372,6 +374,23 @@ async function gwLink(on) {
         $("#gwMsg").textContent = on ? "已接入。在 ChatCut Desktop 里新开一个对话，选 Claude Code 即可。" : "已断开，Claude Code 恢复原来的设置。"; }
   catch (e) { $("#gwMsg").textContent = e.message; }
   loadGateway();
+}
+async function gwDiagnose() {
+  $("#gwDiag").innerHTML = '<div class="note">诊断中…会在本机实际调用一次 Claude Code，最多约 2 分钟。</div>';
+  try {
+    const d = await api("/api/gateway/diagnose");
+    const pill = {ok: '<span class="pill ok">正常</span>', warn: '<span class="pill warn">注意</span>', fail: '<span class="pill fail">问题</span>'};
+    const rows = (list, f) => list.length ? `<div class="tablewrap"><table>${list.map(f).join("")}</table></div>` : '<div class="muted">（无）</div>';
+    $("#gwDiag").innerHTML = `<div class="note">
+      ${d.findings.map((x) => `<div style="margin:4px 0">${pill[x.level]} ${esc(x.text)}</div>`).join("") || "没有发现问题。"}
+      <details style="margin-top:8px"><summary>明细</summary>
+        <h3>网关最近收到的请求</h3>${rows(d.recent, (r) => `<tr><td>${esc(r.time)}</td><td class="mono">${esc(r.requested)} → ${esc(r.model || "")}</td><td>${r.status}</td><td class="muted">${esc(r.client)}</td></tr>`)}
+        <h3>本机实际调用 Claude Code</h3>${d.claude ? `<div>${d.claude.via_gateway ? "走了网关" : "没走网关"}；模型：<span class="mono">${esc((d.claude.models || []).join(", "))}</span>；回复：${esc(d.claude.message || "")}</div>` : '<div class="muted">（没有测试：还没接入）</div>'}
+        <h3>环境变量</h3>${rows(d.env, (e) => `<tr><td class="muted">${esc(e.source)}</td><td class="mono">${esc(e.key)}</td><td class="mono">${esc(e.value)}</td></tr>`)}
+        <h3>Claude Code 设置文件</h3>${rows(d.settings, (e) => `<tr><td class="muted">${esc(e.source)}</td><td class="mono">${esc(e.key)}</td><td class="mono">${esc(e.value)}</td></tr>`)}
+        <h3>ChatCut Desktop 配置里提到模型的地方</h3>${rows(d.desktop_configs, (e) => `<tr><td class="muted">${esc(e.file)}</td><td class="mono">${esc(e.line)}</td></tr>`)}
+      </details></div>`;
+  } catch (e) { $("#gwDiag").innerHTML = `<div class="note">${esc(e.message)}</div>`; }
 }
 // ---- 本机 ChatCut Desktop ----
 let dkChoice = null, dkFound = [];

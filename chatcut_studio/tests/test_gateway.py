@@ -147,3 +147,27 @@ def test_reasoning_content_round_trip():
     assert back["messages"][1]["tool_calls"][0]["function"]["name"] == "Read"
     ev = b"".join(gateway.sse_events(msg)).decode()
     assert '"thinking_delta"' in ev and '"signature_delta"' in ev and '"input_json_delta"' in ev
+
+
+def test_diagnose_finds_qwen_overrides(isolated_data, monkeypatch):
+    """诊断：找出环境变量、高优先级设置、ChatCut Desktop 配置里残留的 Qwen。"""
+    import asyncio
+    from chatcut_studio import diagnose
+
+    home = isolated_data / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.local.json").write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://dashscope.aliyuncs.com/apps/anthropic"}}), "utf-8")
+    cfg = home / "AppData" / "Roaming" / "ChatCut" / "agents.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"claudeCode": {"model": "qwen3-coder-plus", "apiKey": "sk-abcdefghijklmnop"}}, indent=1), "utf-8")
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setenv("ANTHROPIC_MODEL", "qwen3-coder-plus")
+    settings.update({"providers": [{"id": "deepseek", "model": "deepseek-v4-pro", "api_key": "sk-x-1234567890"}]})
+    gateway.link()
+    d = asyncio.run(diagnose.diagnose(run_claude=False))
+    text = " ".join(f["text"] for f in d["findings"])
+    assert "settings.local.json" in text and "Qwen" in text                  # 本地设置优先级更高，指向阿里云
+    assert "ANTHROPIC_MODEL" in text                                         # 环境变量冲突
+    assert any("qwen3-coder-plus" in c["line"] for c in d["desktop_configs"])
+    assert all("abcdefghijklmnop" not in c["line"] for c in d["desktop_configs"])   # Key 打码
+    assert "ChatCut Desktop 自己的配置里提到了 Qwen" in text

@@ -164,6 +164,11 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     def gw_status():
         return gateway.status()
 
+    @app.get("/api/gateway/diagnose")
+    async def gw_diagnose(run: int = 1):
+        from . import diagnose
+        return await diagnose.diagnose(run_claude=bool(run))
+
     @app.post("/api/gateway/{action}")
     async def gw_action(action: str):
         try:

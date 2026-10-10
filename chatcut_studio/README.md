@@ -39,7 +39,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（64 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（65 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
 
 ## JIZURA 动态排版（`jizura.py`）
 
@@ -96,6 +96,8 @@ ChatCut Desktop AI 输入框 → Claude Code → Studio 网关 → DeepSeek（Op
 
 已用真实的 Claude Code 验证：只靠 Studio 写入的设置，Claude Code 经网关调用（模拟的）OpenAI 兼容 DeepSeek，完成「模型发起读文件 → Claude Code 执行 → 结果和思考内容回传 → 回答」的完整一轮。
 
+**Desktop 里还是别的模型（比如 Qwen）？** 点「诊断：Desktop 里为什么不是 DeepSeek」（`diagnose.py`）：检查网关有没有收到过 Claude Code 的请求；查系统 / 用户环境变量、Claude Code 的本地和托管设置里有没有优先级更高、指向别的模型的配置；扫 ChatCut Desktop 自己的配置目录里提到 Qwen 的地方；并在本机实际调用一次 Claude Code，看它有没有走网关。结论会说明是该在 Desktop 里把 Agent 切到「Claude Code」，还是该删掉哪一项冲突配置。
+
 在 Studio 里剪也一样用 DeepSeek：「剪辑 Agent 用什么驱动」选 API 模型（默认 DeepSeek），「ChatCut 连接」选本机 ChatCut Desktop，到「③ 一键剪辑」下任务，改的就是 Desktop 里当前打开的项目。
 
 ## 连接本机 ChatCut Desktop（`desktop.py`）
@@ -151,6 +153,7 @@ chatcut_studio/
   chatcut_mcp.py   直连 ChatCut MCP（OAuth / Token）
   desktop.py       查找并连接本机 ChatCut Desktop（Agent 配置 / 进程端口，HTTP / stdio）
   gateway.py       本机模型网关：Claude Code（ChatCut Desktop 里的 Agent）通过它用 DeepSeek
+  diagnose.py      诊断 Desktop 里为什么没用上 DeepSeek（环境变量、设置优先级、Desktop 配置、实测）
   agent.py         三种执行器（Claude Code / API / 演示）、权限策略、运行与确认
   presets.py       5 个内置风格
   styles.py        风格库：上限 5 个、版本历史、恢复预设、安装

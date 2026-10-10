@@ -18,7 +18,9 @@ import json
 import os
 import re
 import secrets
+import time
 import uuid
+from collections import deque
 from pathlib import Path
 
 import httpx
@@ -67,8 +69,26 @@ def route(s: settings.Settings) -> tuple[Provider, str]:
     return p, "openai"
 
 
+RECENT: deque[dict] = deque(maxlen=30)     # 最近收到的请求（诊断用：Claude Code 到底有没有走网关）
+
+
 async def handle(body: dict, headers) -> Response:
-    """/gateway/v1/messages"""
+    """/gateway/v1/messages：记一笔再处理。"""
+    rec = {"time": time.strftime("%H:%M:%S"), "requested": body.get("model", ""), "client": (headers.get("user-agent") or "")[:80],
+           "stream": bool(body.get("stream"))}
+    r = await _handle(body, headers)
+    rec["status"] = r.status_code
+    if not rec.get("model"):
+        try:
+            s = settings.load()
+            rec["model"] = pick_model(s.gateway, s.provider(s.gateway.provider), rec["requested"])
+        except KeyError:
+            rec["model"] = ""
+    RECENT.append(rec)
+    return r
+
+
+async def _handle(body: dict, headers) -> Response:
     s = settings.load()
     if not authorized(headers, s.gateway.token):
         return error(401, "ChatCut Studio 网关：Token 不对。请在 Studio「连接设置」里重新点「接入 Claude Code」。", "authentication_error")
@@ -396,7 +416,7 @@ async def self_test() -> dict:
     s = settings.load()
     body = {"model": "claude-sonnet", "max_tokens": 200, "stream": False,
             "messages": [{"role": "user", "content": "请只回复：连接成功"}]}
-    r = await handle(body, {"x-api-key": s.gateway.token})
+    r = await handle(body, {"x-api-key": s.gateway.token, "user-agent": "ChatCut Studio 自测"})
     data = json.loads(r.body) if hasattr(r, "body") else {}
     if r.status_code >= 400 or data.get("type") == "error":
         msg = (data.get("error") or {}).get("message") if isinstance(data, dict) else ""
