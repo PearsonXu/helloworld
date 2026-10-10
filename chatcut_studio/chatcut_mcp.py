@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import webbrowser
 from contextlib import asynccontextmanager
 
 from mcp import Client
@@ -72,7 +73,14 @@ class OAuthFlow:
 
     async def redirect_handler(self, url: str) -> None:
         self.auth_url, self.status = url, "waiting"
+        self.message = "请在弹出的浏览器页面里登录 ChatCut 并授权"
         self._code = asyncio.get_running_loop().create_future()
+        # 程序跑在用户自己的电脑上，直接由服务端打开默认浏览器（网页里的 window.open 常被弹窗拦截）
+        if os.environ.get("CHATCUT_STUDIO_NO_BROWSER") != "1":
+            try:
+                await asyncio.to_thread(webbrowser.open, url)
+            except Exception:
+                pass  # 打不开就靠网页上的「打开授权页」按钮
 
     async def callback_handler(self) -> AuthorizationCodeResult:
         if self._code is None:

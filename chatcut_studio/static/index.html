@@ -116,7 +116,7 @@
 
   <div class="card">
     <h2>ChatCut 连接（API 模型方式）</h2>
-    <p class="sub">本程序直接连接 ChatCut 的 MCP 服务。连接后会列出 ChatCut 提供的全部工具和本程序对每个工具的权限策略。</p>
+    <p class="sub">本程序直接连接 ChatCut 云端的 MCP 服务（不经过 ChatCut Desktop，不需要重启它）。连接后会列出 ChatCut 提供的全部工具和本程序对每个工具的权限策略。</p>
     <div class="grid">
       <label style="grid-column:1/-1">MCP 地址<input id="mcp_url"></label>
       <label>认证方式<select id="mcp_auth"><option value="oauth">浏览器登录（OAuth）</option><option value="token">手动填写 Token</option><option value="none">不认证（本地测试服务器）</option></select></label>
@@ -333,12 +333,11 @@ async function mcpConnect() {
   catch (e) { $("#mcpMsg").textContent = e.message; return; }
   clearInterval(mcpPoll); mcpPoll = setInterval(pollMcp, 1000); pollMcp();
 }
-let openedAuth = null;
 async function pollMcp() {
   const st = await api("/api/mcp/status");
   $("#mcpMsg").textContent = st.message;
-  $("#mcpAuth").innerHTML = st.auth_url ? `<div class="note">请在浏览器里登录 ChatCut 并授权：<a href="${esc(st.auth_url)}" target="_blank" rel="noopener">打开授权页</a></div>` : "";
-  if (st.auth_url && openedAuth !== st.auth_url) { openedAuth = st.auth_url; window.open(st.auth_url, "_blank", "noopener"); }
+  // 授权页由服务端用默认浏览器打开；没弹出来时点这个按钮
+  $("#mcpAuth").innerHTML = st.auth_url ? `<div class="note">已在默认浏览器打开 ChatCut 登录页。没看到的话：<a class="btn primary" href="${esc(st.auth_url)}" target="_blank" rel="noopener">打开授权页</a>　登录并授权后这里会自动显示「已连接」。</div>` : "";
   if (st.status === "ok" || st.status === "error" || st.status === "idle") { clearInterval(mcpPoll); if (st.status === "ok") showTools(); }
 }
 async function showTools() {
