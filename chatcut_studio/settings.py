@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,13 @@ from .desktop import Endpoint
 
 DATA_ROOT = Path(os.environ.get("CHATCUT_STUDIO_DATA", Path(__file__).parent / "data"))
 CHATCUT_MCP_URL = "https://api.chatcut.io/api/external-mcp/mcp"
+# 各服务商的 Anthropic 兼容接口（给 Claude Code 用，见 gateway.py）。界面里可以改。
+ANTHROPIC_COMPAT = {
+    "deepseek": "https://api.deepseek.com/anthropic",
+    "kimi": "https://api.moonshot.cn/anthropic",
+    "glm": "https://open.bigmodel.cn/api/anthropic",
+    "qwen": "https://dashscope.aliyuncs.com/apps/anthropic",
+}
 
 
 class Provider(BaseModel):
@@ -27,13 +36,25 @@ class Provider(BaseModel):
     api_key: str = ""
     key_env: str = ""  # 没填 api_key 时，从这个环境变量读取
     hint: str = ""
+    anthropic_url: str = ""  # Anthropic 兼容接口；空 = 用 ANTHROPIC_COMPAT 里的默认值
 
     def key(self) -> str:
         return self.api_key or (os.environ.get(self.key_env, "") if self.key_env else "")
 
+    def anthropic_endpoint(self) -> str:
+        if self.kind == "anthropic":
+            return self.base_url or "https://api.anthropic.com"
+        if self.anthropic_url:
+            return self.anthropic_url
+        # 默认的 Anthropic 兼容接口只对官方地址有效；填的是中转 / 其他 OpenAI 兼容地址时走翻译
+        preset = next((p for p in PRESETS if p.id == self.id), None)
+        same_host = preset and urlparse(preset.base_url).hostname == urlparse(self.base_url).hostname
+        return ANTHROPIC_COMPAT.get(self.id, "") if same_host else ""
+
     def public(self) -> dict:
         k = self.key()
         d = self.model_dump(exclude={"api_key"})
+        d["anthropic_endpoint"] = self.anthropic_endpoint()
         d["has_key"] = bool(k)
         d["key_preview"] = (k[:3] + "…" + k[-4:]) if len(k) > 10 else ("已设置" if k else "")
         d["key_from_env"] = bool(not self.api_key and k)
@@ -44,7 +65,7 @@ PRESETS: list[Provider] = [
     Provider(id="claude", label="Claude（Anthropic API）", kind="anthropic", model="claude-opus-5-5",
              key_env="ANTHROPIC_API_KEY", hint="https://platform.claude.com 申请 API Key"),
     Provider(id="deepseek", label="DeepSeek", kind="openai", base_url="https://api.deepseek.com",
-             key_env="DEEPSEEK_API_KEY", hint="https://platform.deepseek.com 申请；deepseek-chat 等旧名已于 2026/07/24 停用"),
+             key_env="DEEPSEEK_API_KEY", hint="填 OpenAI 兼容地址：官方是 https://api.deepseek.com，用中转服务就填中转地址；Key 在 platform.deepseek.com 申请"),
     Provider(id="qwen", label="通义千问（阿里云百炼）", kind="openai",
              base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", model="qwen-plus",
              key_env="DASHSCOPE_API_KEY", hint="阿里云百炼控制台申请"),
@@ -64,12 +85,24 @@ class McpConfig(BaseModel):
     desktop: Endpoint | None = None                   # 选定的 Desktop 端点；None = 每次自动查找
 
 
+class GatewayConfig(BaseModel):
+    """本机模型网关（gateway.py）：Claude Code / ChatCut Desktop 通过它使用 Studio 里的模型。"""
+    provider: str = "deepseek"
+    model: str = ""                  # 空 = 用这个服务商在上面选好的模型
+    small_model: str = ""            # Claude Code 后台小任务用的快速模型；空 = 同一个
+    mode: Literal["auto", "anthropic", "openai"] = "auto"
+    context_tokens: int = 128000     # 告诉 Claude Code 这个模型的上下文长度（它不认识第三方模型名）
+    token: str = Field(default_factory=lambda: secrets.token_urlsafe(24))   # 本机访问网关的 Token
+    backup: dict[str, str | None] = Field(default_factory=dict)            # 接入前 Claude Code 里的原值
+
+
 class Settings(BaseModel):
     providers: list[Provider] = Field(default_factory=lambda: [p.model_copy() for p in PRESETS])
-    style_provider: str = "claude"  # 风格优化用哪个模型
-    agent_mode: Literal["claude_code", "api"] = "claude_code"  # 剪辑 Agent 用 Claude Code 插件，还是 API 模型直连 ChatCut MCP
+    style_provider: str = "deepseek"  # 风格优化用哪个模型
+    agent_mode: Literal["claude_code", "api"] = "api"  # 剪辑 Agent 用 Claude Code 插件，还是 API 模型直连 ChatCut MCP
     agent_provider: str = "deepseek"
     mcp: McpConfig = Field(default_factory=McpConfig)
+    gateway: GatewayConfig = Field(default_factory=GatewayConfig)
 
     def provider(self, pid: str) -> Provider:
         for p in self.providers:
@@ -78,7 +111,8 @@ class Settings(BaseModel):
         raise KeyError(pid)
 
     def public(self) -> dict:
-        d = self.model_dump(exclude={"providers", "mcp"})
+        d = self.model_dump(exclude={"providers", "mcp", "gateway"})
+        d["gateway"] = self.gateway.model_dump(exclude={"token", "backup"})
         d["providers"] = [p.public() for p in self.providers]
         d["mcp"] = {"target": self.mcp.target, "url": self.mcp.url, "auth": self.mcp.auth, "has_token": bool(self.mcp.token),
                     "desktop": mask_endpoint(self.mcp.desktop.model_dump()) if self.mcp.desktop else None}
@@ -130,7 +164,7 @@ def update(patch: dict) -> Settings:
     s = load()
     for pp in patch.get("providers", []):
         p = s.provider(pp["id"])
-        for k in ("base_url", "model"):
+        for k in ("base_url", "model", "anthropic_url"):
             if k in pp:
                 setattr(p, k, pp[k].strip())
         if pp.get("api_key"):
@@ -149,6 +183,17 @@ def update(patch: dict) -> Settings:
             s.mcp.auth = m["auth"]
         if m.get("token"):
             s.mcp.token = "" if m["token"] == "-" else m["token"].strip()
+    if g := patch.get("gateway"):
+        for k in ("provider", "model", "small_model", "mode"):
+            if k in g:
+                setattr(s.gateway, k, g[k].strip() if isinstance(g[k], str) else g[k])
+        s.provider(s.gateway.provider)
     s = Settings.model_validate(s.model_dump())
     save(s)
     return s
+
+
+def set_gateway_backup(backup: dict) -> None:
+    s = load()
+    s.gateway.backup = backup
+    save(s)

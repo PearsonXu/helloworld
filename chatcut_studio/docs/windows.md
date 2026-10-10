@@ -60,6 +60,7 @@ winget install -e --id Gyan.FFmpeg
    - **Agent 方式**：
      - 只有 API Key（DeepSeek、通义千问、Kimi、智谱、Claude API）→ 选「API 模型直连 ChatCut」，填 Key，点「获取模型列表」选模型。
      - 已装 Claude Code → 选「Claude Code 插件」，点「体检」，按提示「一键安装插件」，然后在 PowerShell 里运行页面给出的登录命令（`claude mcp login …`）。
+   - **在 ChatCut Desktop 里用 DeepSeek**：在「模型服务商」里填 DeepSeek 的 base_url（OpenAI 兼容地址）、Key、模型 → 点「测试 DeepSeek」→ 点「接入 Claude Code」→ 在 ChatCut Desktop 里新开对话，AI 输入框选「Claude Code」。用完点「断开，恢复原设置」。
    - **ChatCut 连接**：
      - **本机 ChatCut Desktop**（推荐）：先打开 ChatCut Desktop 和一个项目，点「自动查找」，选中「可连接」的那一项，点「保存并连接」。找不到时展开「手动填写」，填 Desktop 的本机地址或启动命令。
      - **ChatCut 云端**：点「保存并连接」，在弹出的浏览器里登录授权。
@@ -93,7 +94,7 @@ chatcut_studio\windows\run.bat
 ### 跑测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（58 个）
+.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（64 个）
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests\test_jizura.py -q -x   # 只测动态排版，遇错即停
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q -k lyrics   # 按名字筛选
 ```

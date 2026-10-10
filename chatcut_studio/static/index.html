@@ -115,6 +115,28 @@
   </div>
 
   <div class="card">
+    <h2>在 ChatCut Desktop 里用 DeepSeek</h2>
+    <p class="sub">ChatCut Desktop 的 AI 输入框里选「Claude Code」时，Desktop 会启动本机的 Claude Code。点「接入」后，Claude Code 改为通过本程序调用上面配置的 DeepSeek，在 Studio 里换模型、换 Key 立即生效。</p>
+    <div id="gwStatus" class="muted">读取中…</div>
+    <div class="grid" style="margin-top:8px">
+      <label>转发方式<select id="gw_mode">
+        <option value="auto">自动（推荐）</option>
+        <option value="openai">OpenAI 兼容接口</option>
+        <option value="anthropic">Anthropic 兼容接口</option></select>
+        <span class="muted" style="font-size:12px">自动：官方 api.deepseek.com 走它的 Anthropic 兼容接口；中转等其他地址按 OpenAI 兼容接口翻译</span></label>
+      <label>快速模型（Claude Code 的后台小任务用，可留空）<input id="gw_small" list="models-deepseek" placeholder="留空 = 和主模型相同"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" onclick="gwTest()">测试 DeepSeek</button>
+      <button class="btn primary" id="gwLinkBtn" onclick="gwLink(true)">接入 Claude Code</button>
+      <button class="btn" id="gwUnlinkBtn" onclick="gwLink(false)">断开，恢复原设置</button>
+      <span id="gwMsg" class="muted"></span>
+    </div>
+    <div class="note">用法：① 在上面填好 DeepSeek 的 Key 和模型 → ② 点「测试 DeepSeek」→ ③ 点「接入 Claude Code」→ ④ 在 ChatCut Desktop 里新开一个对话（没生效就重启 Desktop），AI 输入框选「Claude Code」。<br>
+      注意：接入期间本机所有 Claude Code 会话都会用 DeepSeek，而且 Studio 要保持运行；点「断开」恢复原来的设置。本机需要已安装 Claude Code（Desktop 检测到它才会出现这个选项）。</div>
+  </div>
+
+  <div class="card">
     <h2>ChatCut 连接</h2>
     <p class="sub">Agent 操作哪里的 ChatCut。连接后会列出 ChatCut 提供的全部工具和本程序对每个工具的权限策略。</p>
     <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px;margin-bottom:8px">
@@ -236,7 +258,7 @@
         <button class="btn primary" id="runBtn" onclick="startRun()">交给 Agent 执行</button>
         <button class="btn" onclick="copyPrompt()">只复制提示词</button>
       </div>
-      <div class="note">会花积分、上传、删除或导出的操作，都会先在右侧弹出确认。「只复制提示词」可以粘到 ChatCut Desktop 的 AI 面板里用。</div>
+      <div class="note">会花积分、上传、删除或导出的操作，都会先在右侧弹出确认。「只复制提示词」可以粘到 ChatCut Desktop 的 AI 输入框里用（接入 Claude Code 后，那边用的也是 DeepSeek）。</div>
     </div>
     <div class="card">
       <h2>本地渲染歌词视频</h2>
@@ -294,7 +316,7 @@ async function loadSettings() {
   const opts = S.providers.map((p) => `<option value="${p.id}">${esc(p.label)}${p.has_key && p.model ? "" : "（未配置）"}</option>`).join("");
   $("#agent_provider").innerHTML = opts; $("#agent_provider").value = S.agent_provider;
   $("#style_provider").innerHTML = opts; $("#style_provider").value = S.style_provider;
-  $("#providers").innerHTML = S.providers.map((p) => `
+  const provCard = (p) => `
     <div class="prov" data-id="${p.id}">
       <div class="row" style="justify-content:space-between">
         <strong>${esc(p.label)}</strong>
@@ -313,13 +335,43 @@ async function loadSettings() {
         ${p.has_key && !p.key_from_env ? `<button class="btn small" onclick="clearKey('${p.id}')">清除 Key</button>` : ""}
         <span class="muted" data-msg></span>
       </div>
-    </div>`).join("");
+    </div>`;
+  const main = S.providers.filter((p) => p.id === "deepseek"), rest = S.providers.filter((p) => p.id !== "deepseek");
+  $("#providers").innerHTML = main.map(provCard).join("") +
+    `<details style="margin-top:10px"><summary class="muted">其他模型服务商（暂不需要）</summary>${rest.map(provCard).join("")}</details>`;
+  loadGateway();
   $("#mcp_url").value = S.mcp.url; $("#mcp_auth").value = S.mcp.auth;
   document.querySelectorAll("input[name=mcp_target]").forEach((r) => { r.checked = r.value === S.mcp.target; r.onchange = toggleTarget; });
   dkChoice = S.mcp.desktop; renderDesktop(); toggleTarget();
   $("#mcp_token").placeholder = S.mcp.has_token ? "已保存（留空不修改）" : "粘贴 access token";
   toggleToken();
   const st = await api("/api/mcp/status"); $("#redirectUri").textContent = st.redirect_uri;
+}
+// ---- 本机模型网关：ChatCut Desktop 里的 Claude Code 用 DeepSeek ----
+async function loadGateway() {
+  const g = await api("/api/gateway");
+  $("#gw_small").value = g.small_model || ""; $("#gw_mode").value = g.mode || "auto";
+  const how = g.how === "anthropic" ? "DeepSeek Anthropic 兼容接口，原样转发" : g.how === "openai" ? "OpenAI 兼容接口，自动翻译" : "";
+  $("#gwStatus").innerHTML = (g.linked ? '<span class="pill ok">已接入 Claude Code</span> ' : '<span class="pill warn">未接入</span> ') +
+    (g.problem ? `<span style="color:var(--warn)">${esc(g.problem)}</span>`
+      : `模型 <span class="mono">${esc(g.model)}</span>（${esc(how)}）`) +
+    `<br><span class="muted">网关地址 <span class="mono">${esc(g.url)}</span>　Claude Code 设置文件 <span class="mono">${esc(g.claude_settings)}</span></span>`;
+  $("#gwLinkBtn").textContent = g.linked ? "重新接入（更新设置）" : "接入 Claude Code";
+  $("#gwUnlinkBtn").style.display = g.linked ? "" : "none";
+}
+async function gwSave() { await put("/api/settings", {gateway: {provider: "deepseek", small_model: $("#gw_small").value, mode: $("#gw_mode").value}}); }
+async function gwTest() {
+  $("#gwMsg").textContent = "正在通过网关调用 DeepSeek…";
+  try { await gwSave(); const r = await post("/api/gateway/test");
+        $("#gwMsg").textContent = r.ok ? `✓ DeepSeek 回复：${r.message}` : `✗ ${r.message}`; }
+  catch (e) { $("#gwMsg").textContent = e.message; }
+  loadGateway();
+}
+async function gwLink(on) {
+  try { if (on) await gwSave(); await post(on ? "/api/gateway/link" : "/api/gateway/unlink");
+        $("#gwMsg").textContent = on ? "已接入。在 ChatCut Desktop 里新开一个对话，选 Claude Code 即可。" : "已断开，Claude Code 恢复原来的设置。"; }
+  catch (e) { $("#gwMsg").textContent = e.message; }
+  loadGateway();
 }
 // ---- 本机 ChatCut Desktop ----
 let dkChoice = null, dkFound = [];
@@ -563,7 +615,8 @@ async function loadRunTab() {
   $("#runStyle").innerHTML = '<option value="">（不使用风格）</option>' + styles.map((x) => `<option value="${x.slug}">${esc(x.name)}</option>`).join("");
   $("#runStyle").value = prev || styles[0]?.slug || "";
   const p = s.providers.find((x) => x.id === s.agent_provider);
-  $("#runMode").textContent = s.agent_mode === "api" ? `执行方式：${p.label}（${p.model || "未选模型"}）直连 ChatCut` : "执行方式：Claude Code + ChatCut 插件";
+  const where = s.mcp.target === "desktop" ? "本机 ChatCut Desktop 里当前打开的项目" : "ChatCut 云端项目";
+  $("#runMode").textContent = (s.agent_mode === "api" ? `执行方式：${p.label}（${p.model || "未选模型"}）` : "执行方式：Claude Code") + ` → 编辑${where}`;
 }
 const runBody = () => JSON.stringify({task: $("#task").value, assets: $("#assets").value, style: $("#runStyle").value || null});
 async function copyPrompt() {

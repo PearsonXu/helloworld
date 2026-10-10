@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import chatcut_mcp, envcheck, jizura, lyrics, optimize, settings, styles
+from . import chatcut_mcp, envcheck, gateway, jizura, lyrics, optimize, settings, styles
 from .agent import RunManager, build_prompt, classify
 from .presets import MAX_STYLES
 from .profile import StyleProfile, render_skill_md
@@ -106,7 +106,10 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.put("/api/settings")
     def put_settings(patch: dict):
         try:
-            return settings.update(patch).public()
+            s = settings.update(patch).public()
+            if "gateway" in patch or "providers" in patch:
+                gateway.refresh_if_linked()      # 已接入 Claude Code 时，顺手更新它显示的模型名
+            return s
         except (KeyError, ValueError) as e:
             raise HTTPException(400, f"设置不合法：{e}")
 
@@ -141,6 +144,38 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     async def _tools() -> list[dict]:
         async with chatcut_mcp.connect(settings.load().mcp) as client:
             return await chatcut_mcp.list_tools(client)
+
+    # ---------- 本机模型网关：Claude Code / ChatCut Desktop 用 Studio 里的模型 ----------
+    @app.post("/gateway/v1/messages")
+    async def gw_messages(req: Request):
+        try:
+            body = await req.json()
+        except ValueError:
+            return gateway.error(400, "请求不是 JSON", "invalid_request_error")
+        return await gateway.handle(body, req.headers)
+
+    @app.post("/gateway/v1/messages/count_tokens")
+    async def gw_count(req: Request):
+        if not gateway.authorized(req.headers, settings.load().gateway.token):
+            return gateway.error(401, "Token 不对", "authentication_error")
+        return gateway.count_tokens(await req.json())
+
+    @app.get("/api/gateway")
+    def gw_status():
+        return gateway.status()
+
+    @app.post("/api/gateway/{action}")
+    async def gw_action(action: str):
+        try:
+            if action == "link":
+                return gateway.link()
+            if action == "unlink":
+                return gateway.unlink()
+            if action == "test":
+                return await gateway.self_test()
+        except (KeyError, ValueError, OSError) as e:
+            raise HTTPException(400, f"操作失败：{e}")
+        raise HTTPException(404, "未知操作")
 
     @app.get("/api/mcp/desktop/discover")
     async def desktop_discover():
