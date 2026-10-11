@@ -9,3 +9,4 @@ pillow>=10
 playwright>=1.56
 pytest>=8
 psutil>=5.9
+pylibrb>=0.1.2; python_version >= "3.12"   # 高音质降调（Rubber Band），ffmpeg 没带 rubberband 滤镜时用

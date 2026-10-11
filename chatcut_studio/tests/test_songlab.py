@@ -105,3 +105,29 @@ def test_songs_api_upload_files_and_prompts(isolated_data, fake_llm):
     d = songlab.SONGS_ROOT / "巷口暖灯"
     assert (d / "05_配图" / "配图提示词.md").is_file() and (d / "04_歌词" / "歌词.txt").read_text("utf-8").startswith("巷口")
     assert "巷口灯光忽明忽灭" in llm.requests[0]["body"]["messages"][-1]["content"]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("engine", ["ffmpeg", "pylibrb", "basic"])
+def test_every_pitch_engine_shifts_exactly(isolated_data, monkeypatch, engine):
+    """三种降调方式（ffmpeg 滤镜 / Python 版 Rubber Band / 兜底）都要降得准、时长不变。"""
+    if engine == "ffmpeg" and "rubberband" not in subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout:
+        pytest.skip("这个 ffmpeg 没有 rubberband 滤镜")
+    if engine == "pylibrb":
+        pytest.importorskip("pylibrb")
+    monkeypatch.setattr(songlab, "_ENGINE", engine)
+    write_wav(isolated_data / "v.wav", tone([69, 72, 76, 72] * 6))     # 约 19 秒：超过 Python 版 Rubber Band 一次能处理的 12 秒
+    for shift in (-4, -6):
+        out = isolated_data / f"out_{shift}.wav"
+        songlab.shift_audio(isolated_data / "v.wav", out, shift, formant=True)
+        a = songlab.vocal_f0(songlab.load_mono(isolated_data / "v.wav"))[0]
+        b = songlab.vocal_f0(songlab.load_mono(out))[0]
+        got = 12 * np.log2(np.median(b[b > 0]) / np.median(a[a > 0]))
+        assert abs(got - shift) < 0.35, (engine, shift, got)
+        n_in, n_out = wave.open(str(isolated_data / "v.wav")).getnframes(), wave.open(str(out)).getnframes()
+        assert abs(n_out - n_in) < SR * 0.08, (engine, n_in, n_out)
+    clip = isolated_data / "clip.mp3"
+    songlab.shift_audio(isolated_data / "v.wav", clip, -5, True, start=1.0, seconds=3)
+    assert clip.stat().st_size > 20_000
+    info = songlab.engine_info()
+    assert info["engine"] == engine and info["formant"] == (engine != "basic") and bool(info["hint"]) == (engine == "basic")

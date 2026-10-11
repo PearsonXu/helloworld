@@ -404,10 +404,12 @@ function renderSong() {
   html += step(3, "降调（女声 → 男声）", s.exports.length > 0,
     (a ? `<div class="note">原曲调性约 <strong>${esc(a.key)}</strong>${a.key_after ? ` → 降调后 <strong>${esc(a.key_after)}</strong>` : ""}；原唱人声 ${esc(a.low_note)}–${esc(a.high_note)}（中位 ${esc(a.mid_note)}）。<br>建议：<strong>${a.suggest === 0 ? "不用降" : "降 " + (-a.suggest) + " 个半音"}</strong>。${esc(a.advice)}</div>`
        : `<div class="note">分离人声后会自动分析原唱音域，给出建议降几度。女转男一般降 4–5 个半音。</div>`) +
+    (SONGS && SONGS.pitch ? `<div class="muted" style="margin-top:6px">降调方式：${esc(SONGS.pitch.label)}</div>` +
+      (SONGS.pitch.hint ? `<div class="note" style="border-color:var(--warn)">${esc(SONGS.pitch.hint)}</div>` : "") : "") +
     `<div class="row" style="margin-top:8px">试听：
        <label style="display:inline-flex;align-items:center;color:var(--ink)"><input type="radio" name="ptrack" ${songTrack === "mix" ? "checked" : ""} onchange="songTrack='mix';renderSong()">整首</label>
        <label style="display:inline-flex;align-items:center;color:var(--ink)"><input type="radio" name="ptrack" ${songTrack === "vocals" ? "checked" : ""} ${s.has_stems ? "" : "disabled"} onchange="songTrack='vocals';renderSong()">只听人声</label>
-       <label style="display:inline-flex;align-items:center;color:var(--ink)"><input type="checkbox" ${songFormant ? "checked" : ""} onchange="songFormant=this.checked;renderSong()">保留共振峰（人声更自然，推荐）</label></div>
+       ${SONGS && SONGS.pitch && !SONGS.pitch.formant ? "" : `<label style="display:inline-flex;align-items:center;color:var(--ink)"><input type="checkbox" ${songFormant ? "checked" : ""} onchange="songFormant=this.checked;renderSong()">保留共振峰（人声更自然，推荐）</label>`}</div>
      <div style="margin-top:6px">${shifts.map((n) => `<div class="row" style="margin:6px 0;flex-wrap:wrap">
        <span style="width:92px;white-space:nowrap">${n === 0 ? "原调" : "降 " + (-n)}${n === sug && n !== 0 ? ' <span class="pill ok">建议</span>' : ""}</span>
        <audio controls preload="none" src="/api/songs/${enc(s.name)}/preview?shift=${n}&track=${songTrack}&formant=${songFormant ? 1 : 0}" style="width:320px;max-width:100%"></audio>

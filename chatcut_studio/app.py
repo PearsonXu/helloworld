@@ -154,6 +154,7 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     def songs_list():
         ok, why = songlab.separator_ready()
         return {"songs": songlab.list_songs(), "root": str(songlab.SONGS_ROOT), "separator": ok, "separator_hint": why,
+                "pitch": songlab.engine_info(),
                 "models": songlab.MODELS, "default_model": songlab.DEFAULT_MODEL, "preview_shifts": songlab.PREVIEW_SHIFTS}
 
     @app.post("/api/songs")

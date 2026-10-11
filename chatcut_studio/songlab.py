@@ -342,9 +342,95 @@ def analyze(name: str) -> dict:
 
 
 # ---------------------------------------------------------------- 降调：试听片段 + 导出
+# 降调引擎：按顺序用第一个能用的
+#   ffmpeg  —— ffmpeg 自带的 rubberband 滤镜（不是所有 ffmpeg 都编译了它，比如精简版）
+#   pylibrb —— Rubber Band 的 Python 版（pip 装，Windows 有预编译版，Python 3.12+），R3 引擎，音质最好
+#   basic   —— 兜底：ffmpeg 内置的变速 + 变调（asetrate + atempo），一定能用，但不能保留共振峰，人声会发闷
+ENGINE_LABEL = {"ffmpeg": "Rubber Band（ffmpeg 滤镜，保留共振峰）", "pylibrb": "Rubber Band（Python 版 R3 引擎，保留共振峰）",
+                "basic": "基础降调（ffmpeg 内置，不能保留共振峰，人声会发闷）"}
+_ENGINE: str | None = None
+
+
+def pitch_engine(refresh: bool = False) -> str:
+    global _ENGINE
+    if _ENGINE and not refresh:
+        return _ENGINE
+    filters = subprocess.run([_ffmpeg(), "-hide_banner", "-filters"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace").stdout
+    if re.search(r"\srubberband\s", filters):
+        _ENGINE = "ffmpeg"
+    else:
+        try:
+            import pylibrb  # noqa: F401
+            _ENGINE = "pylibrb"
+        except ImportError:
+            _ENGINE = "basic"
+    return _ENGINE
+
+
+def engine_info() -> dict:
+    e = pitch_engine()
+    hint = "" if e != "basic" else ("当前 ffmpeg 没有 Rubber Band 滤镜，降调会发闷。装高音质降调：在 PowerShell 里运行 "
+                                    ".\\.venv\\Scripts\\python.exe -m pip install pylibrb（需要 Python 3.12 及以上），然后重启 Studio。")
+    return {"engine": e, "label": ENGINE_LABEL[e], "formant": e != "basic", "hint": hint}
+
+
 def _rubberband(shift: int, formant: bool) -> str:
     ratio = 2 ** (shift / 12)
     return f"rubberband=pitch={ratio:.6f}:pitchq=quality:transients=smooth" + (":formant=preserved" if formant else "")
+
+
+def _basic(shift: int, sr: int = 44100) -> str:
+    r = 2 ** (shift / 12)
+    tempo, chain = 1 / r, []
+    while tempo > 2.0:                     # atempo 每级只能 0.5–2
+        chain.append("atempo=2.0"); tempo /= 2.0
+    while tempo < 0.5:
+        chain.append("atempo=0.5"); tempo /= 0.5
+    chain.append(f"atempo={tempo:.6f}")
+    return f"asetrate={sr * r:.3f},aresample={sr}," + ",".join(chain)
+
+
+def _cut(start: float | None, seconds: float | None) -> list[str]:
+    return ([] if start is None else ["-ss", f"{start:.2f}"]) + ([] if seconds is None else ["-t", str(seconds)])
+
+
+def shift_audio(src: Path, dst: Path, shift: int, formant: bool, start: float | None = None, seconds: float | None = None) -> None:
+    """把 src（可截取一段）降 / 升 shift 个半音，写成 dst（按扩展名：wav 或 mp3）。速度不变。"""
+    enc = ["-c:a", "libmp3lame", "-b:a", "320k" if seconds is None else "192k"] if dst.suffix == ".mp3" else ["-c:a", "pcm_s16le"]
+    engine = pitch_engine()
+    if shift == 0 or engine in ("ffmpeg", "basic"):
+        af = [] if shift == 0 else ["-af", _rubberband(shift, formant) if engine == "ffmpeg" else _basic(shift)]
+        _run([_ffmpeg(), "-y", "-v", "error", *_cut(start, seconds), "-i", str(src), *af, "-ar", "44100", *enc, str(dst)], timeout=1800)
+        return
+    # pylibrb：ffmpeg 解码成浮点 → Rubber Band 离线处理 → ffmpeg 编码
+    from pylibrb import Option, RubberBandStretcher
+    sr = 44100
+    p = subprocess.run([_ffmpeg(), "-v", "error", *_cut(start, seconds), "-i", str(src), "-ac", "2", "-ar", str(sr),
+                        "-f", "f32le", "-"], capture_output=True, timeout=600)
+    if p.returncode != 0:
+        raise SongError(p.stderr.decode("utf-8", "replace")[-500:])
+    x = np.ascontiguousarray(np.frombuffer(p.stdout, dtype=np.float32).reshape(-1, 2).T)
+    opts = Option.PROCESS_OFFLINE | Option.ENGINE_FINER | (Option.FORMANT_PRESERVED if formant else Option.FORMANT_SHIFTED)
+    st = RubberBandStretcher(sample_rate=sr, channels=2, options=opts, initial_pitch_scale=2 ** (shift / 12))
+    n = x.shape[1]
+    block = 1 << 16                                  # 一次最多只能送约 12 秒，整首歌分块：先整体 study，再逐块 process
+    st.set_expected_input_duration(n)
+    st.set_max_process_size(block)
+    for i in range(0, n, block):
+        st.study(x[:, i:i + block], final=i + block >= n)
+    outs = []
+    for i in range(0, n, block):
+        st.process(x[:, i:i + block], final=i + block >= n)
+        outs.append(st.retrieve_available())
+    while (rest := st.retrieve_available()).shape[1]:
+        outs.append(rest)
+    y = np.concatenate(outs, axis=1)
+    pcm = np.ascontiguousarray(np.clip(y, -1, 1).T, dtype=np.float32).tobytes()
+    q = subprocess.run([_ffmpeg(), "-y", "-v", "error", "-f", "f32le", "-ar", str(sr), "-ac", "2", "-i", "-", *enc, str(dst)],
+                       input=pcm, capture_output=True, timeout=600)
+    if q.returncode != 0:
+        raise SongError(q.stderr.decode("utf-8", "replace")[-500:])
 
 
 def track_path(d: Path, track: str) -> Path:
@@ -353,7 +439,7 @@ def track_path(d: Path, track: str) -> Path:
 
 
 def preview(name: str, shift: int, track: str = "mix", formant: bool = True, start: float | None = None, seconds: int = 30) -> Path:
-    """试听片段（mp3，缓存）：同一套 Rubber Band 参数，所以听到的就是导出的效果。"""
+    """试听片段（mp3，缓存）：和导出用同一个降调引擎、同一套参数，听到的就是导出的效果。"""
     d = song_dir(name)
     src = track_path(d, track)
     if not src.is_file():
@@ -361,12 +447,12 @@ def preview(name: str, shift: int, track: str = "mix", formant: bool = True, sta
     if start is None:
         a = info(name)["analysis"] or {}
         start = float(a.get("preview_start", 30.0))
-    out = d / ".preview" / f"{track}_{shift}_{'f' if formant else 'n'}_{int(start)}.mp3"
+    out = d / ".preview" / f"{track}_{shift}_{'f' if formant else 'n'}_{int(start)}_{pitch_engine()}.mp3"
     if not out.is_file():
         out.parent.mkdir(exist_ok=True)
-        af = [] if shift == 0 else ["-af", _rubberband(shift, formant)]
-        _run([_ffmpeg(), "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", str(seconds), "-i", str(src), *af,
-              "-c:a", "libmp3lame", "-b:a", "192k", str(out)], timeout=300)
+        tmp = out.with_suffix(".tmp.mp3")
+        shift_audio(src, tmp, shift, formant, start, seconds)
+        os.replace(tmp, out)
     return out
 
 
@@ -378,9 +464,8 @@ def export(name: str, shift: int, formant: bool = True) -> list[str]:
     lab, made = shift_label(shift), []
     tracks = [("混音", "mix")] + ([("人声", "vocals"), ("伴奏", "inst")] if info(name)["has_stems"] else [])
     for cn, tr in tracks:
-        af = [] if shift == 0 else ["-af", _rubberband(shift, formant and tr != "inst")]   # 伴奏没有共振峰的问题
         wav = out_dir / f"{cn}_{lab}.wav"
-        _run([_ffmpeg(), "-y", "-v", "error", "-i", str(track_path(d, tr)), *af, "-c:a", "pcm_s16le", str(wav)])
+        shift_audio(track_path(d, tr), wav, shift, formant and tr != "inst")     # 伴奏没有共振峰的问题
         made.append(wav.name)
         if tr == "mix":             # Suno 上传用 mp3 更方便
             mp3 = out_dir / f"{cn}_{lab}.mp3"

@@ -103,7 +103,7 @@ chatcut_studio\windows\run.bat
 ### 跑测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（72 个）
+.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（75 个）
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests\test_jizura.py -q -x   # 只测动态排版，遇错即停
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q -k lyrics   # 按名字筛选
 ```
@@ -165,5 +165,6 @@ chatcut_studio\windows\run.bat
 | 中文乱码 | 用 `run.bat` 启动（已设 `PYTHONUTF8=1` 和 UTF-8 代码页）；自己启动时先 `$env:PYTHONUTF8=1` |
 | 字体下载失败 | 需要能访问 GitHub；也可以手动把字体放到 `%USERPROFILE%\.cache\chatcut-studio\fonts`（页面会列出缺哪些） |
 | 端口被占用 | `$env:PORT=8800` 后再启动 |
+| 降调导出报 `No such filter: 'rubberband'` | 你的 ffmpeg 没带这个滤镜。`git pull` 后运行 `.\.venv\Scripts\python.exe -m pip install -r chatcut_studio\requirements.txt`（会装 Python 版 Rubber Band，需要 Python 3.12+），重启 Studio |
 | Desktop 的 Agent 按钮里没有「Claude」 | 本机没装 Claude Code。用「ChatGPT」（Codex）接入 DeepSeek 即可，不需要 Claude Code |
 | 杀毒软件拦截 | 把 `helloworld\.venv` 和 `%LOCALAPPDATA%\ms-playwright` 加入信任 |
