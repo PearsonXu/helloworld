@@ -1,0 +1,30 @@
+# Copy to config.toml (git-ignored). No secrets in this file.
+
+[scan]
+exchanges = ["binance", "okx", "bybit", "gate", "kucoin"]   # ccxt ids
+symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT"]
+times = ["08:00", "14:00", "20:00"]      # local time, daily
+taker_fee_pct = 0.1                      # per fill
+min_net_spread_pct = 0.2                 # cross-exchange, after fees
+min_funding_apr_pct = 10.0
+triangular_exchange = "binance"
+triangular_min_profit_pct = 0.05
+
+[risk]
+mode = "paper"                 # "paper" until you trust it; then "live"
+max_capital_usd = 150
+max_per_trade_usd = 30
+daily_loss_limit_usd = 10
+max_trades_per_day = 5
+max_slippage_pct = 0.3
+allow_live_swap = false        # perpetuals in live mode
+allowed_symbols = []           # empty = same as scan.symbols
+
+[llm]
+enabled = true
+max_calls_per_day = 10
+temperature = 0.2
+
+[panel]
+host = "127.0.0.1"             # loopback only; enforced
+port = 8765

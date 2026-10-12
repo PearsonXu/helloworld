@@ -1,0 +1,5 @@
+ccxt>=4.4
+fastapi>=0.110
+uvicorn>=0.29
+openai>=1.40
+python-dotenv>=1.0

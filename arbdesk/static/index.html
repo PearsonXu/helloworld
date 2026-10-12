@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ArbDesk 本地面板</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#6b7385; --line:#e3e6ec;
+          --accent:#2f6fed; --good:#14804a; --bad:#c4321c; --warn:#a96a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12151b; --card:#1b1f27; --fg:#e6e9ef; --muted:#8d95a6; --line:#2b3140;
+            --accent:#6b9bff; --good:#3fbf7f; --bad:#ff6b57; --warn:#e0a83a; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:14px 20px;
+           border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:17px; margin:0 12px 0 0; }
+  .pill { padding:2px 10px; border-radius:999px; border:1px solid var(--line); font-size:12px; color:var(--muted); }
+  .pill.live { color:#fff; background:var(--bad); border-color:var(--bad); }
+  .pill.paper { color:#fff; background:var(--good); border-color:var(--good); }
+  main { max-width:1200px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; overflow-x:auto; }
+  h2 { font-size:15px; margin:0 0 10px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; }
+  button { font:inherit; padding:6px 14px; border-radius:6px; border:1px solid var(--accent);
+           background:var(--accent); color:#fff; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); }
+  button.danger { background:transparent; color:var(--bad); border-color:var(--bad); }
+  button:disabled { opacity:.5; cursor:default; }
+  .stats { display:flex; flex-wrap:wrap; gap:24px; }
+  .stat b { display:block; font-size:20px; }
+  .stat span { color:var(--muted); font-size:12px; }
+  .muted { color:var(--muted); }
+  .good { color:var(--good); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  .card { border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #login { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ArbDesk</h1>
+  <span id="mode" class="pill">…</span>
+  <span id="llm" class="pill">AI …</span>
+  <span id="times" class="pill">定时 …</span>
+  <span style="flex:1"></span>
+  <button id="run">立即扫描 + AI 分析</button>
+  <button id="runScan" class="ghost">仅扫描</button>
+</header>
+<main>
+  <section id="login"><h2>未登录</h2><p>请打开终端里打印的带 token 的地址（只在本机有效）。</p></section>
+  <section>
+    <h2>今日</h2>
+    <div class="stats" id="stats"></div>
+    <p class="muted" id="riskline"></p>
+  </section>
+  <section>
+    <h2>待审批建议 <span class="muted">（AI 只能提议，执行必须你点"批准"，且再过一遍硬性风控）</span></h2>
+    <div id="proposals"></div>
+  </section>
+  <section>
+    <h2>AI 分析</h2>
+    <div id="analysis" class="muted">暂无</div>
+  </section>
+  <section>
+    <h2>最新扫描 <span class="muted" id="scanmeta"></span></h2>
+    <table><thead><tr><th>类型</th><th>标的</th><th>详情</th><th>净收益</th><th>备注</th></tr></thead>
+      <tbody id="opps"></tbody></table>
+  </section>
+  <section>
+    <h2>成交记录（仅保存在本地 SQLite）</h2>
+    <table><thead><tr><th>时间</th><th>模式</th><th>交易所</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>金额$</th><th>手续费$</th><th>PnL$</th></tr></thead>
+      <tbody id="trades"></tbody></table>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

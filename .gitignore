@@ -1,0 +1,12 @@
+# Secrets and local data never leave this machine
+.env
+.env.*
+!.env.example
+config.toml
+data/
+*.db
+*.sqlite*
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
