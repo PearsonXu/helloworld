@@ -75,7 +75,7 @@ def test_vault_change_password_and_delete(tmp_path):
 @pytest.fixture
 def cfg_files(tmp_path):
     (tmp_path / "config.toml").write_text(
-        f'data_dir = "{tmp_path / "data"}"\n[polymarket]\nmode = "live"\n'
+        f'data_dir = "{(tmp_path / "data").as_posix()}"\n[polymarket]\nmode = "live"\n'
         'max_live_usd_per_day = 20\nmax_live_exposure_usd = 30\n')
     return tmp_path
 

@@ -14,7 +14,7 @@ from arbdesk.web import create_app
 
 @pytest.fixture
 def settings(tmp_path):
-    (tmp_path / "config.toml").write_text(f'data_dir = "{tmp_path / "data"}"\n')
+    (tmp_path / "config.toml").write_text(f'data_dir = "{(tmp_path / "data").as_posix()}"\n')
     (tmp_path / ".env").write_text("LLM_API_KEY=sk-test-123456\nEXCHANGE_OKX_API_KEY=abcdefgh\n")
     return load_settings(tmp_path / "config.toml", tmp_path / ".env")
 

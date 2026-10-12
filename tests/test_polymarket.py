@@ -13,7 +13,7 @@ from arbdesk.storage import Store
 
 @pytest.fixture
 def settings(tmp_path):
-    (tmp_path / "config.toml").write_text(f'data_dir = "{tmp_path / "data"}"\n')
+    (tmp_path / "config.toml").write_text(f'data_dir = "{(tmp_path / "data").as_posix()}"\n')
     return load_settings(tmp_path / "config.toml", tmp_path / ".env")
 
 

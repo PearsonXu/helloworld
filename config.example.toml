@@ -1,4 +1,5 @@
 # Copy to config.toml (git-ignored). No secrets in this file.
+# Windows paths: use forward slashes or single quotes, e.g. data_dir = 'D:\arbdesk-data'
 
 [scan]
 exchanges = ["binance", "okx", "bybit", "gate", "kucoin"]   # ccxt ids
