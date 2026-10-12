@@ -39,3 +39,8 @@ max_usd_per_market = 20
 ai_markets_per_run = 8
 ai_min_edge = 0.08             # AI prob must beat price + fee by this much to propose
 ai_horizon_days = [1, 60]
+# --- real money (needs: vault with POLYMARKET_PRIVATE_KEY, pip install -r requirements-live.txt) ---
+mode = "paper"                 # "live" sends real orders after you type LIVE to confirm each one
+max_live_usd_per_day = 20
+max_live_exposure_usd = 50     # total cost of unresolved live positions
+price_tolerance = 0.01         # max price above the proposal's limit (FOK orders)

@@ -47,11 +47,18 @@
   <span id="mode" class="pill">…</span>
   <span id="llm" class="pill">AI …</span>
   <span id="times" class="pill">定时 …</span>
+  <span id="pmmode" class="pill">Polymarket …</span>
+  <span id="secsrc" class="pill">密钥 …</span>
   <span style="flex:1"></span>
   <button id="run">立即扫描 + AI 分析</button>
   <button id="runScan" class="ghost">仅扫描</button>
+  <button id="halt" class="danger">紧急停止实盘</button>
 </header>
 <main>
+  <section id="haltBanner" style="display:none;border-color:var(--bad)">
+    <h2 class="bad">实盘已停止</h2><p id="haltReason"></p>
+    <button id="resume" class="ghost">确认已检查，恢复实盘</button>
+  </section>
   <section id="login"><h2>未登录</h2><p>请打开终端里打印的带 token 的地址（只在本机有效）。</p></section>
   <section>
     <h2>今日</h2>
@@ -72,7 +79,7 @@
       <tbody id="opps"></tbody></table>
   </section>
   <section id="pmSection">
-    <h2>Polymarket <span class="muted">（仅模拟盘）</span> <span class="muted" id="pmmeta"></span></h2>
+    <h2>Polymarket <span class="muted" id="pmmodeLabel"></span> <span class="muted" id="pmmeta"></span></h2>
     <div class="stats" id="pmstats"></div>
     <h3 style="font-size:14px;margin:14px 0 6px">多结果套利（negRisk：买齐所有结果，兑付固定）</h3>
     <table><thead><tr><th>事件</th><th>方向</th><th>份数</th><th>成本$</th><th>兑付$</th><th>利润</th></tr></thead>

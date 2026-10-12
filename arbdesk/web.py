@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from .config import Settings
@@ -92,6 +93,9 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
                     "max_calls_per_day": settings.llm.max_calls_per_day},
             "today": store.today_stats(),
             "running": desk.running,
+            "polymarket_mode": settings.polymarket.mode,
+            "halted": store.halted(),
+            "secrets_source": settings.secrets.source,
         }
 
     @app.get("/api/scans", dependencies=[Depends(auth)])
@@ -126,11 +130,24 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
         return {"started": True}
 
     @app.post("/api/proposals/{pid}/approve", dependencies=[Depends(auth), Depends(json_only)])
-    def approve(pid: int):
+    async def approve(pid: int, request: Request):
+        body = await request.json()
+        # Real money requires the user to have typed LIVE in the confirmation dialog.
+        confirm = isinstance(body, dict) and body.get("confirm_live") == "LIVE"
         try:
-            return executor.execute(pid)
+            return await run_in_threadpool(executor.execute, pid, confirm)
         except ValueError as e:
             raise HTTPException(400, str(e))
+
+    @app.post("/api/halt", dependencies=[Depends(auth), Depends(json_only)])
+    def halt():
+        executor.halt("halted from panel")
+        return {"ok": True}
+
+    @app.post("/api/resume", dependencies=[Depends(auth), Depends(json_only)])
+    def resume():
+        executor.resume()
+        return {"ok": True}
 
     @app.post("/api/proposals/{pid}/reject", dependencies=[Depends(auth), Depends(json_only)])
     def reject(pid: int):

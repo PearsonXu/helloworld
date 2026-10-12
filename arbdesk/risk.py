@@ -21,6 +21,15 @@ def validate(payload: dict, settings: Settings, store: Store) -> tuple[list[dict
         if not all(is_pm):
             return [], ["cannot mix Polymarket and exchange legs in one proposal"]
         legs, errors = _validate_polymarket(legs_in, settings)
+        if settings.polymarket.mode == "live" and legs:
+            total = sum(l["usd"] for l in legs)
+            pm = settings.polymarket
+            if store.live_pm_spent_today() + total > pm.max_live_usd_per_day:
+                errors.append(f"would exceed polymarket.max_live_usd_per_day ({pm.max_live_usd_per_day})")
+            if store.live_pm_open_exposure() + total > pm.max_live_exposure_usd:
+                errors.append(f"would exceed polymarket.max_live_exposure_usd ({pm.max_live_exposure_usd})")
+            if not settings.secrets.pm_private_key:
+                errors.append("live Polymarket needs POLYMARKET_PRIVATE_KEY in the vault")
     else:
         legs = _validate_exchange_legs(legs_in, settings, errors)
 
@@ -30,9 +39,19 @@ def validate(payload: dict, settings: Settings, store: Store) -> tuple[list[dict
     stats = store.today_stats()
     if stats["trades"] >= r.max_trades_per_day:
         errors.append(f"daily trade limit reached ({r.max_trades_per_day})")
+    if is_live(legs, settings) and (reason := store.halted()):
+        errors.append(f"live trading halted: {reason}")
     if stats["pnl_usd"] <= -abs(r.daily_loss_limit_usd):
         errors.append(f"daily loss limit hit ({stats['pnl_usd']:.2f} USD)")
     return legs, errors
+
+
+def is_live(legs: list[dict], settings: Settings) -> bool:
+    if not legs:
+        return False
+    if legs[0]["exchange"] == "polymarket":
+        return settings.polymarket.mode == "live"
+    return settings.risk.mode == "live"
 
 
 def _validate_polymarket(legs_in: list[dict], settings: Settings) -> tuple[list[dict], list[str]]:

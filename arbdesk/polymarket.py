@@ -43,6 +43,11 @@ class PolymarketConfig:
     ai_markets_per_run: int = 8
     ai_min_edge: float = 0.08
     ai_horizon_days: list[int] = field(default_factory=lambda: [1, 60])
+    # --- live trading (real money) ---
+    mode: str = "paper"                 # "paper" or "live"
+    max_live_usd_per_day: float = 20    # total live spend per UTC day
+    max_live_exposure_usd: float = 50   # cost of all unresolved live positions
+    price_tolerance: float = 0.01       # max price above the proposal's limit
 
 
 # --------------------------------------------------------------------------

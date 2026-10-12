@@ -1,6 +1,7 @@
 """Executes approved proposals in paper or live mode.
 
-Nothing runs without a human clicking "approve" in the panel (or the CLI).
+Nothing runs without a human clicking "approve" in the panel (or the CLI), and
+real-money proposals additionally need an explicit live confirmation.
 This module never calls withdraw/transfer endpoints.
 """
 from __future__ import annotations
@@ -12,6 +13,7 @@ import ccxt
 
 from . import risk
 from .config import Settings
+from .pm_live import LiveTradingError, PolymarketTrader
 from .polymarket import PolymarketClient, book_side, taker_fee_per_share
 from .storage import Store
 
@@ -24,6 +26,26 @@ class Executor:
         self.store = store
         self._clients: dict[tuple[str, str, bool], ccxt.Exchange] = {}
         self.pm = PolymarketClient()
+        self._pm_trader: PolymarketTrader | None = None
+
+    @property
+    def pm_trader(self) -> PolymarketTrader:
+        if self._pm_trader is None:
+            self._pm_trader = PolymarketTrader(self.settings.secrets, self.settings.polymarket)
+        return self._pm_trader
+
+    def halt(self, reason: str) -> None:
+        """Kill switch: blocks all live execution until resumed."""
+        self.store.set_flag("halt", reason)
+        log.warning("LIVE TRADING HALTED: %s", reason)
+        try:
+            if self._pm_trader is not None:
+                self._pm_trader.cancel_all()
+        except Exception as e:
+            log.warning("cancel_all failed: %s", e)
+
+    def resume(self) -> None:
+        self.store.set_flag("halt", "")
 
     def client(self, ex_id: str, market: str, authed: bool) -> ccxt.Exchange:
         key = (ex_id, market, authed)
@@ -45,7 +67,7 @@ class Executor:
         t = self.client(leg["exchange"], leg["market"], False).fetch_ticker(self.market_symbol(leg))
         return {"bid": t["bid"], "ask": t["ask"]}
 
-    def execute(self, proposal_id: int) -> dict:
+    def execute(self, proposal_id: int, confirm_live: bool = False) -> dict:
         p = self.store.proposal(proposal_id)
         if not p:
             raise ValueError("proposal not found")
@@ -56,7 +78,14 @@ class Executor:
             self.store.set_proposal_status(proposal_id, "rejected", "; ".join(errors))
             return {"ok": False, "errors": errors}
 
+        if risk.is_live(legs, self.settings) and not confirm_live:
+            # Leave the proposal pending: the caller must ask the human to confirm real money.
+            return {"ok": False, "needs_confirm": True,
+                    "errors": ["real-money order: explicit live confirmation required"]}
+
         if legs[0]["exchange"] == "polymarket":
+            if self.settings.polymarket.mode == "live":
+                return self._execute_polymarket_live(proposal_id, legs)
             return self._execute_polymarket(proposal_id, legs)
 
         mode = self.settings.risk.mode
@@ -74,9 +103,11 @@ class Executor:
         for i, f in enumerate(fills):
             self.store.add_trade(proposal_id=proposal_id, mode=mode,
                                  pnl_usd=pnl if i == 0 else None, **f)
-        status = "executed" if not failures else "failed"
+        status = "executed" if not failures else ("partial" if fills else "failed")
         note = "; ".join(failures) or (f"realized pnl {pnl:.4f} USD" if pnl is not None else "position opened")
         self.store.set_proposal_status(proposal_id, status, note)
+        if mode == "live" and failures and fills:
+            self.halt(f"partial fill on proposal #{proposal_id}")
         return {"ok": not failures, "fills": fills, "errors": failures, "pnl_usd": pnl}
 
     def _execute_polymarket(self, proposal_id: int, legs: list[dict]) -> dict:
@@ -98,27 +129,85 @@ class Executor:
                                        f"paper position opened, cost ${cost:.2f}; settles at resolution")
         return {"ok": True, "fills": fills, "errors": [], "pnl_usd": None}
 
-    def _pm_paper_fill(self, leg: dict) -> dict:
+    def _pm_book_check(self, leg: dict) -> tuple[float, float, float]:
+        """Prices `leg` against the live book. Returns (avg, cost, depth within limit)."""
+        cap = leg["limit_price"] + self.settings.polymarket.price_tolerance
         asks = book_side(self.pm.book(leg["token_id"]), "asks")
         need, cost = leg["shares"], 0.0
         for price, size in asks:
+            if price > cap + 1e-9:
+                break
             q = min(need, size)
             cost += q * price
             need -= q
             if need <= 1e-9:
                 break
         if need > 1e-9:
-            raise ValueError("not enough depth in order book")
-        avg = cost / leg["shares"]
-        # Allow one tick (0.01) of drift from the proposal's price.
-        if avg > leg["limit_price"] + 0.01:
-            raise ValueError(f"price moved: avg {avg:.4f} > limit {leg['limit_price']:.4f}")
+            raise ValueError(f"not enough depth at <= {cap:.4f}")
+        depth = sum(sz for p, sz in asks if p <= cap + 1e-9)
+        return cost / leg["shares"], cost, depth
+
+    def _pm_trade(self, leg: dict, avg: float, cost: float, order_id=None, extra=None) -> dict:
         fee = leg["shares"] * taker_fee_per_share(avg, self.settings.polymarket.taker_fee_rate)
         return {"exchange": "polymarket", "symbol": f"{leg['label'][:80]} [{leg['outcome']}]",
                 "side": "buy", "amount": leg["shares"], "price": avg, "cost_usd": cost, "fee_usd": fee,
-                "order_id": None,
+                "order_id": order_id,
                 "raw": json.dumps({"market_id": leg["market_id"], "token_id": leg["token_id"],
-                                   "outcome": leg["outcome"]})}
+                                   "outcome": leg["outcome"], **(extra or {})})}
+
+    def _execute_polymarket_live(self, proposal_id: int, legs: list[dict]) -> dict:
+        """Real money. Pre-flight everything, then send FOK orders thinnest-book first.
+
+        A multi-leg bundle cannot be atomic on Polymarket. If a later leg fails after
+        earlier ones filled, the proposal is marked 'partial' and the kill switch is
+        engaged so a human reviews the unhedged position before anything else runs.
+        """
+        tol = self.settings.polymarket.price_tolerance
+        try:
+            trader = self.pm_trader
+            trader.ensure_allowed()
+            checks = [(leg, *self._pm_book_check(leg)) for leg in legs]
+            need = sum(l["shares"] * (l["limit_price"] + tol) for l in legs) * 1.05  # + fee buffer
+            balance = trader.collateral_balance()
+            if balance < need:
+                raise LiveTradingError(f"balance ${balance:.2f} < required ${need:.2f}")
+        except Exception as e:
+            note = f"pre-flight failed, nothing sent: {type(e).__name__}: {e}"
+            self.store.set_proposal_status(proposal_id, "failed", note)
+            return {"ok": False, "errors": [note]}
+
+        checks.sort(key=lambda c: c[3] / c[0]["shares"])  # least spare depth first
+        fills = []
+        for leg, *_ in checks:
+            try:
+                f = trader.buy_fok(leg["token_id"], leg["shares"], leg["limit_price"])
+            except Exception as e:
+                err = f"{leg['label'] or leg['token_id']}: {type(e).__name__}: {e}"
+                for done in fills:
+                    self.store.add_trade(proposal_id=proposal_id, mode="live", pnl_usd=None, **done)
+                if fills:
+                    msg = (f"PARTIAL: {len(fills)}/{len(legs)} legs filled, then {err}. "
+                           "Review open positions on polymarket.com")
+                    self.store.set_proposal_status(proposal_id, "partial", msg)
+                    self.halt(f"partial fill on proposal #{proposal_id}")
+                else:
+                    msg = f"first order not filled, no position taken: {err}"
+                    self.store.set_proposal_status(proposal_id, "failed", msg)
+                return {"ok": False, "errors": [msg], "fills": fills}
+            leg = {**leg, "shares": f.shares}
+            fills.append(self._pm_trade(leg, f.avg_price, f.cost_usd, f.order_id, f.raw))
+        for done in fills:
+            self.store.add_trade(proposal_id=proposal_id, mode="live", pnl_usd=None, **done)
+        cost = sum(f["cost_usd"] for f in fills)
+        self.store.set_proposal_status(
+            proposal_id, "executed",
+            f"LIVE: {len(fills)} order(s) filled, cost ${cost:.2f}. "
+            "Winnings must be redeemed on polymarket.com after resolution.")
+        return {"ok": True, "fills": fills, "errors": [], "pnl_usd": None}
+
+    def _pm_paper_fill(self, leg: dict) -> dict:
+        avg, cost, _ = self._pm_book_check(leg)
+        return self._pm_trade(leg, avg, cost)
 
     def _paper_fill(self, leg: dict) -> dict:
         q = self.quote(leg)

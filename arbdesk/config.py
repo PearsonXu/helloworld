@@ -74,12 +74,23 @@ class Secrets:
     llm_base_url: str = ""
     llm_model: str = ""
     exchange_keys: dict[str, dict[str, str]] = field(default_factory=dict)
+    # Polymarket wallet: accepted ONLY from the encrypted vault, never from .env.
+    pm_private_key: str = ""
+    pm_funder: str = ""             # proxy / Safe wallet address shown on polymarket.com
+    pm_signature_type: int = 1      # 0 EOA, 1 email/Magic proxy, 2 browser-wallet Safe
+    source: str = "env"             # "env", "vault" or "vault+env"
 
     def all_values(self) -> list[str]:
-        vals = [self.llm_api_key]
+        vals = [self.llm_api_key, self.pm_private_key]
         for creds in self.exchange_keys.values():
             vals.extend(creds.values())
         return [v for v in vals if v and len(v) >= 6]
+
+    def __repr__(self) -> str:  # never print secrets via repr()/logging of the object
+        return (f"Secrets(source={self.source!r}, llm_provider={self.llm_provider!r}, "
+                f"llm_key={'set' if self.llm_api_key else 'unset'}, "
+                f"exchanges={sorted(self.exchange_keys)}, "
+                f"polymarket_wallet={'set' if self.pm_private_key else 'unset'})")
 
 
 @dataclass
@@ -106,11 +117,26 @@ def _check_private(path: Path) -> None:
         log.warning("%s is readable by other users; run: chmod 600 %s", path.name, path)
 
 
-def _load_secrets(env_path: Path) -> Secrets:
+PM_VAULT_ONLY = ("POLYMARKET_PRIVATE_KEY",)
+
+
+def _load_secrets(env_path: Path, vault_data: dict[str, str] | None = None) -> Secrets:
     _check_private(env_path)
     env = {**dotenv_values(env_path)} if env_path.exists() else {}
     # Real environment variables take precedence over the file.
     env.update({k: v for k, v in os.environ.items() if k.startswith(("LLM_", "EXCHANGE_"))})
+    for k in PM_VAULT_ONLY:
+        if env.pop(k, None):
+            log.warning("%s found in .env/environment and IGNORED: store it with "
+                        "`python -m arbdesk vault set %s`", k, k)
+    source = "env"
+    if vault_data is not None:
+        overlap = sorted(k for k in vault_data if env.get(k))
+        if overlap:
+            log.warning("these secrets exist in both .env and the vault (vault wins); "
+                        "delete them from .env: %s", ", ".join(overlap))
+        source = "vault+env" if any(env.get(k) for k in env if k.startswith(("LLM_API", "EXCHANGE_"))) else "vault"
+        env.update({k: v for k, v in vault_data.items() if v})
 
     exchange_keys: dict[str, dict[str, str]] = {}
     for key, value in env.items():
@@ -127,10 +153,15 @@ def _load_secrets(env_path: Path) -> Secrets:
         llm_base_url=env.get("LLM_BASE_URL") or "",
         llm_model=env.get("LLM_MODEL") or "",
         exchange_keys=exchange_keys,
+        pm_private_key=env.get("POLYMARKET_PRIVATE_KEY") or "",
+        pm_funder=env.get("POLYMARKET_FUNDER") or "",
+        pm_signature_type=int(env.get("POLYMARKET_SIGNATURE_TYPE") or 1),
+        source=source,
     )
 
 
-def load_settings(config_path: Path | None = None, env_path: Path | None = None) -> Settings:
+def load_settings(config_path: Path | None = None, env_path: Path | None = None,
+                  vault_data: dict[str, str] | None = None) -> Settings:
     config_path = config_path or ROOT / "config.toml"
     env_path = env_path or ROOT / ".env"
     raw: dict = {}
@@ -146,12 +177,21 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None)
         llm=LLMConfig(**raw.get("llm", {})),
         panel=PanelConfig(**raw.get("panel", {})),
         polymarket=PolymarketConfig(**raw.get("polymarket", {})),
-        secrets=_load_secrets(env_path),
+        secrets=_load_secrets(env_path, vault_data),
         data_dir=data_dir,
     )
     if settings.risk.mode not in ("paper", "live"):
         raise ValueError("risk.mode must be 'paper' or 'live'")
+    if settings.polymarket.mode not in ("paper", "live"):
+        raise ValueError("polymarket.mode must be 'paper' or 'live'")
     return settings
+
+
+def vault_path(config_path: Path | None = None) -> Path:
+    """Vault location follows data_dir, without creating anything."""
+    config_path = config_path or ROOT / "config.toml"
+    raw = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    return Path(raw.get("data_dir", ROOT / "data")) / "vault.json"
 
 
 class RedactingFilter(logging.Filter):

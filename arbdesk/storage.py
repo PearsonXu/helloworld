@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS trades (
     order_id TEXT,
     raw TEXT
 );
+CREATE TABLE IF NOT EXISTS flags (
+    name TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    ts TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS pm_forecasts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
@@ -161,6 +166,33 @@ class Store:
 
     def trades(self, limit: int = 100) -> list[dict]:
         return self._rows("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
+
+    # flags (kill switch) -----------------------------------------------
+    def set_flag(self, name: str, value: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("INSERT INTO flags (name, value, ts) VALUES (?, ?, ?) "
+                              "ON CONFLICT(name) DO UPDATE SET value = excluded.value, ts = excluded.ts",
+                              (name, value, now_iso()))
+
+    def get_flag(self, name: str) -> dict | None:
+        rows = self._rows("SELECT * FROM flags WHERE name = ?", (name,))
+        return rows[0] if rows else None
+
+    def halted(self) -> str | None:
+        """Reason string when live trading is halted, else None."""
+        f = self.get_flag("halt")
+        return f["value"] if f and f["value"] else None
+
+    def live_pm_spent_today(self) -> float:
+        row = self._rows("SELECT COALESCE(SUM(cost_usd + fee_usd), 0) AS s FROM trades "
+                         "WHERE exchange = 'polymarket' AND mode = 'live' AND ts LIKE ?",
+                         (now_iso()[:10] + "%",))[0]
+        return row["s"]
+
+    def live_pm_open_exposure(self) -> float:
+        row = self._rows("SELECT COALESCE(SUM(cost_usd + fee_usd), 0) AS s FROM trades "
+                         "WHERE exchange = 'polymarket' AND mode = 'live' AND pnl_usd IS NULL")[0]
+        return row["s"]
 
     def open_pm_trades(self) -> list[dict]:
         return self._rows("SELECT * FROM trades WHERE exchange = 'polymarket' AND pnl_usd IS NULL")

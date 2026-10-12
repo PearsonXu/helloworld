@@ -32,7 +32,7 @@ ArbDesk 是一个本地运行的 Python 程序。它每天定时扫描几次加�
 
 ---
 
-## 二、Polymarket 模块（仅模拟盘）
+## 二、Polymarket 模块（默认模拟盘，可开实盘）
 
 只读公开接口（Gamma 和 CLOB），不需要钱包或私钥。每次扫描做三件事：
 
@@ -54,14 +54,27 @@ python -m arbdesk polymarket --no-llm
 
 ## 三、安全设计
 
-- **密钥只在本地**：`.env`（已加入 git 忽略，启动时检查是否为 `chmod 600`）。日志会自动打码密钥。
-- **数据只在本地**：扫描、AI 分析、建议、成交记录都存在 `data/arbdesk.db`（SQLite，权限 600，git 忽略）。
-- **发给 AI 的只有公开行情和风控上限**，不发密钥、余额和交易记录（有单元测试保证）。
-- **AI 只能提议，不能执行**：执行必须你在面板里点“批准”，之后还要通过代码里的硬性风控：单笔上限、总资金上限、日亏损上限、每日交易次数、交易所和币种白名单、滑点上限。实盘永续默认禁止。
-- **面板只监听 127.0.0.1**：非回环地址会拒绝启动。访问需要随机 token（HttpOnly + SameSite=Strict cookie），并校验 Host 头（防 DNS rebinding），POST 只接受 JSON（防 CSRF），设置了 CSP，AI 输出全部转义（防 XSS）。
-- **程序不调用任何提币或划转接口。**
+### 1. 加密保险库（`data/vault.json`）
+- **加密方式**：AES-256-GCM 加密，密钥由主密码经 scrypt（约 128 MB 内存）派生，暴力猜密码很慢。文件头（KDF 参数）也纳入认证，被篡改会直接解密失败。
+- **主密码**：不保存在任何地方，每次启动时手动输入。至少 12 位，**忘记就无法恢复**。
+- **写入安全**：先写临时文件，自检能解密后再原子替换；文件权限 600。
+- **Polymarket 钱包私钥只能放在保险库**：写在 `.env` 或环境变量里会被忽略并报警告。
+- **保护范围**：保险库保护的是存在磁盘上的密钥（硬盘、备份、云同步、电脑丢失）。程序运行时密钥在内存里，如果电脑本身中了木马，它保护不了。所以实盘钱包里只放你愿意亏掉的钱。
 
-**交易所 API key 务必这样创建**：只开“交易”权限，**关闭提币**，绑定本机 IP 白名单。最好单独开一个子账户，只放 100–200 美元。
+### 2. 实盘下单的保护
+- **两次确认**：先在面板点“批准（真钱）”，再输入大写 `LIVE`。服务器端也会检查，跳过前端没用。命令行需要 `approve ID --live` 再输入 `LIVE`。
+- **地区检查**：每次下单前调用 Polymarket 官方接口 `polymarket.com/api/geoblock`。所在地区受限，或者检查失败，**都拒绝下单，没有绕过开关**。
+- **下单前预检**：所有腿先对照实时订单簿和 pUSD 余额检查，任何一项不满足就一单都不发。
+- **全成或全撤（FOK）**：每单要么在限价内全部成交，要么完全不成交，不会在订单簿上留下挂单。
+- **多腿顺序**：多结果套利按订单簿最薄的先下，降低“一半成交一半没成交”的概率。如果真的只成交了一部分，建议会标成 `partial`，并**自动触发紧急停止**，等你人工检查。
+- **额度上限**：每日实盘额度（默认 $20）、未结算总敞口（默认 $50）、单市场上限，在代码里硬性检查。
+- **紧急停止**：面板右上角按钮，或者 `python -m arbdesk halt`。停止后所有实盘下单都会被拒绝；`resume` 恢复。
+- **不会做的事**：程序不发任何提币、划转或授权交易，只签订单。
+
+### 3. 其他
+- **数据只在本地**：`data/arbdesk.db`，权限 600，已加入 git 忽略。
+- **发给 AI 的只有公开行情和风控上限。** 面板只监听 127.0.0.1，访问需要 token，有 CSRF、XSS 和 DNS rebinding 防护。日志自动打码密钥。
+- **交易所 API key**：只开“交易”权限，关闭提币，绑定 IP 白名单，用子账户。
 
 ---
 
@@ -69,21 +82,39 @@ python -m arbdesk polymarket --no-llm
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt               # Polymarket 实盘再加：pip install -r requirements-live.txt
+cp config.example.toml config.toml
 
-cp .env.example .env && chmod 600 .env        # 填 LLM_API_KEY（实盘时再填交易所 key）
-cp config.example.toml config.toml            # 调整币种、定时、风控
+# 密钥放进加密保险库（推荐，Polymarket 私钥必须这样放）
+python -m arbdesk vault init                  # 设主密码
+python -m arbdesk vault set LLM_API_KEY       # 输入时不回显
+python -m arbdesk vault list                  # 只显示名字，不显示值
+#（已经有 .env 的话：python -m arbdesk vault import-env，然后删掉 .env 里的密钥行）
 
-python -m arbdesk panel        # 启动面板 + 定时器，打开终端打印的带 token 链接
+python -m arbdesk panel        # 启动面板 + 定时器（会先问主密码）
 python -m arbdesk scan         # 手动跑一次扫描 + AI 分析
-python -m arbdesk scan --no-llm
 python -m arbdesk proposals    # 列出建议
-python -m arbdesk approve 3    # 命令行批准执行
+python -m arbdesk approve 3    # 命令行批准（模拟）
 ```
 
-上实盘的步骤：先模拟盘跑几周，确认建议质量；然后在 `config.toml` 设置 `risk.mode = "live"`，并在 `.env` 填对应交易所的 key。实盘下单使用带滑点上限的限价单，并检查交易所的最小下单量。
+### 开启 Polymarket 实盘（建议先模拟盘跑 4–8 周）
+1. 先确认你所在地区允许使用 Polymarket（程序也会自动检查）。
+2. **新建一个专用钱包**，只充入你愿意亏掉的金额，比如 $50。不要用存了其他资产的钱包。
+3. 在 polymarket.com 用这个钱包登录，先手动完成一次小额交易，让网站帮你完成 pUSD 和授权设置。
+4. 存入密钥：
+   ```bash
+   pip install -r requirements-live.txt
+   python -m arbdesk vault set POLYMARKET_PRIVATE_KEY
+   python -m arbdesk vault set POLYMARKET_FUNDER          # polymarket.com 上显示的钱包地址
+   python -m arbdesk vault set POLYMARKET_SIGNATURE_TYPE  # 1 = 邮箱登录，2 = 浏览器钱包，0 = 普通 EOA
+   ```
+5. `python -m arbdesk pm-check`：检查地区、签名、余额，**不会下单**。
+6. 在 `config.toml` 的 `[polymarket]` 里设置 `mode = "live"`，重启面板。之后每个建议都需要你点“批准（真钱）”并输入 `LIVE`。
+7. 市场结算后，赢的份额需要在 polymarket.com 上点 “Claim” 领取。程序会在本地记录盈亏，但不会替你领取。
 
-> 部分交易所在某些地区访问受限。扫描失败的交易所会显示在面板的“最新扫描”里，其他交易所照常工作。
+交易所实盘：设置 `risk.mode = "live"`，把交易所 key 存进保险库（`vault set EXCHANGE_OKX_API_KEY` 等）。
+
+> 部分交易所和 Polymarket 在某些地区受限。请遵守当地法律和平台条款，程序不会帮助绕过任何地区限制。
 
 ## 五、结构
 
@@ -94,7 +125,9 @@ arbdesk/
   polymarket.py  Polymarket 数据、多结果套利计算、预测候选、结算
   llm.py       DeepSeek / Qwen 分析（JSON 输出）
   risk.py      硬性风控
-  executor.py  模拟盘 / 实盘执行（需人工批准）
+  executor.py  模拟盘 / 实盘执行（需人工批准，实盘需输入 LIVE）
+  vault.py     加密保险库（AES-256-GCM + scrypt）
+  pm_live.py   Polymarket 实盘下单（CLOB V2 SDK，FOK，地区检查）
   service.py   扫描 → 分析 → 生成建议；每日定时
   storage.py   本地 SQLite
   web.py + static/  本地面板

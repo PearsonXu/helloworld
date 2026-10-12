@@ -35,12 +35,21 @@ function oppReturn(o) {
 
 async function refresh() {
   const s = await api("/api/state");
-  $("mode").textContent = s.mode === "live" ? "实盘 LIVE" : "模拟 PAPER";
+  $("mode").textContent = s.mode === "live" ? "加密货币 实盘 LIVE" : "加密货币 模拟";
   $("mode").className = "pill " + s.mode;
   $("llm").textContent = s.llm.configured
     ? `AI ${s.llm.provider}/${s.llm.model} · 今日 ${s.llm.calls_today}/${s.llm.max_calls_per_day}`
     : "AI 未配置";
   $("times").textContent = "定时 " + s.scan_times.join(" / ");
+  const pmLive = s.polymarket_mode === "live";
+  $("pmmode").textContent = pmLive ? "Polymarket 实盘 LIVE" : "Polymarket 模拟";
+  $("pmmode").className = "pill " + (pmLive ? "live" : "paper");
+  $("pmmodeLabel").textContent = pmLive ? "（实盘：真钱）" : "（模拟盘）";
+  $("secsrc").textContent = { vault: "密钥：加密保险库", "vault+env": "密钥：保险库 + .env（建议迁移）", env: "密钥：.env 明文" }[s.secrets_source] || s.secrets_source;
+  $("haltBanner").style.display = s.halted ? "" : "none";
+  $("haltReason").textContent = s.halted ? `原因：${s.halted}` : "";
+  $("halt").style.display = s.halted ? "none" : "";
+  window.__live = { crypto: s.mode === "live", pm: pmLive };
   $("run").disabled = $("runScan").disabled = s.running;
   $("run").textContent = s.running ? "运行中…" : "立即扫描 + AI 分析";
   const pnlCls = s.today.pnl_usd >= 0 ? "good" : "bad";
@@ -79,9 +88,12 @@ async function refresh() {
     const legs = (p.payload.legs || []).map((l) => l.exchange === "polymarket"
       ? `Polymarket 买 ${esc(l.outcome)} · ${esc(l.label)} · ${esc(l.shares)} 份 @ ≤${esc(l.limit_price)}`
       : `${esc(l.exchange)} ${esc(l.market || "spot")} ${esc(l.side)} ${esc(l.symbol)} $${esc(l.usd)}`).join("<br>");
+    const pmLegs = (p.payload.legs || []).some((l) => l.exchange === "polymarket");
+    const live = pmLegs ? window.__live.pm : window.__live.crypto;
+    const cost = (p.payload.legs || []).reduce((t, l) => t + (l.exchange === "polymarket" ? l.shares * l.limit_price : +l.usd || 0), 0);
     const actions = p.status === "pending"
-      ? `<button data-act="approve" data-id="${p.id}">批准执行</button> <button class="danger" data-act="reject" data-id="${p.id}">拒绝</button>`
-      : `<span class="muted">${esc(p.status)}</span>`;
+      ? `<button data-act="approve" data-id="${p.id}" data-live="${live ? 1 : 0}" data-cost="约 $${cost.toFixed(2)}" class="${live ? "danger" : ""}">${live ? "批准（真钱）" : "批准执行"}</button> <button class="danger" data-act="reject" data-id="${p.id}">拒绝</button>`
+      : `<span class="${p.status === "partial" ? "bad" : "muted"}">${esc(p.status)}</span>`;
     return `<div class="card"><div class="row"><b>#${p.id} ${esc(p.payload.title)}</b>
       <span class="muted">置信度 ${esc(p.payload.confidence)}</span><span style="flex:1"></span>${actions}</div>
       <div>${esc(p.payload.rationale)}</div><div class="muted">${legs}</div>
@@ -127,15 +139,25 @@ document.addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   const { act, id } = b.dataset;
-  if (act === "approve" && !confirm(`确认执行建议 #${id}？`)) return;
+  const isLive = b.dataset.live === "1";
+  let body = {};
+  if (act === "approve") {
+    if (isLive) {
+      const typed = prompt(`⚠️ 建议 #${id} 将用真钱下单（${b.dataset.cost}）。\n确认请输入大写 LIVE：`);
+      if (typed !== "LIVE") return;
+      body = { confirm_live: "LIVE" };
+    } else if (!confirm(`确认执行建议 #${id}（模拟）？`)) return;
+  }
   b.disabled = true;
   try {
-    const r = await api(`/api/proposals/${id}/${act}`, {});
+    const r = await api(`/api/proposals/${id}/${act}`, body);
     if (r.errors && r.errors.length) alert(r.errors.join("\n"));
   } catch (err) { alert(err.message); }
   refresh();
 });
 $("run").onclick = () => api("/api/run", { use_llm: true }).then(refresh);
+$("halt").onclick = () => confirm("立即停止所有实盘下单？") && api("/api/halt", {}).then(refresh);
+$("resume").onclick = () => confirm("确认已在交易所/Polymarket 检查过持仓，恢复实盘？") && api("/api/resume", {}).then(refresh);
 $("runScan").onclick = () => api("/api/run", { use_llm: false }).then(refresh);
 
 refresh().catch(() => {});
