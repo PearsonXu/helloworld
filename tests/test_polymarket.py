@@ -9,6 +9,7 @@ from arbdesk.config import load_settings
 from arbdesk.executor import Executor
 from arbdesk.service import Desk
 from arbdesk.storage import Store
+from arbdesk.venues import PolymarketVenue
 
 
 @pytest.fixture
@@ -155,7 +156,7 @@ class FakePM:
 
 def test_paper_execution_and_settlement(settings, store):
     ex = Executor(settings, store)
-    ex.pm = FakePM({"1-yes": book([], [(0.30, 5), (0.32, 100)]), "2-yes": book([], [(0.60, 100)])})
+    ex._venues["polymarket"] = PolymarketVenue(settings.polymarket, settings, client=FakePM({"1-yes": book([], [(0.30, 5), (0.32, 100)]), "2-yes": book([], [(0.60, 100)])}))
     pid = store.add_proposal(None, {"title": "bundle", "legs": [
         pm_leg(shares=10, limit_price=0.31),
         pm_leg(market_id="2", token_id="2-yes", label="B", shares=10, limit_price=0.60)]})
@@ -169,7 +170,7 @@ def test_paper_execution_and_settlement(settings, store):
     desk = Desk(settings, store)
     client = FakePM({}, {"1": {"closed": True, "outcomePrices": '["1", "0"]'},
                          "2": {"closed": True, "outcomePrices": '["0", "1"]'}})
-    assert desk.settle_polymarket(client) == 2
+    assert desk.settle(PolymarketVenue(settings.polymarket, settings, client=client)) == 2
     pnl = {json.loads(t["raw"])["market_id"]: t["pnl_usd"] for t in store.trades()}
     assert pnl["1"] == pytest.approx(10 - 3.1 - leg1["fee_usd"])
     assert pnl["2"] < 0
@@ -177,7 +178,7 @@ def test_paper_execution_and_settlement(settings, store):
 
 def test_paper_execution_rejects_price_move(settings, store):
     ex = Executor(settings, store)
-    ex.pm = FakePM({"1-yes": book([], [(0.50, 100)])})
+    ex._venues["polymarket"] = PolymarketVenue(settings.polymarket, settings, client=FakePM({"1-yes": book([], [(0.50, 100)])}))
     pid = store.add_proposal(None, {"title": "x", "legs": [pm_leg(limit_price=0.40)]})
     r = ex.execute(pid)
     assert not r["ok"] and store.trades() == []
@@ -187,7 +188,7 @@ def test_paper_execution_rejects_price_move(settings, store):
 def test_forecast_scores(store):
     store.add_forecast(market_id="1", question="q", end_date=None, market_prob=0.6, ai_prob=0.8,
                        confidence=0.7, rationale="")
-    store.resolve_forecasts("1", 1)
+    store.resolve_forecasts("polymarket", "1", 1)
     s = store.forecast_scores()
     assert s["resolved"] == 1 and s["ai_brier"] == pytest.approx(0.04) and s["market_brier"] == pytest.approx(0.16)
 
@@ -218,13 +219,12 @@ def test_polymarket_cycle_end_to_end(settings, store, monkeypatch):
         {"market_id": "2", "prob": 0.31, "confidence": 0.9, "rationale": "test"},   # no edge
     ])
     desk = Desk(settings, store, analyst=StubAnalyst())
-    desk.pm_client = client
-    out = desk.polymarket_cycle(use_llm=True)
+    out = desk.venue_cycle(PolymarketVenue(settings.polymarket, settings, client=client), use_llm=True)
     assert out["arbitrage"] == 1 and out["forecasts"] == 2
     props = store.proposals()
     titles = [p["payload"]["title"] for p in props]
     assert any("多结果套利" in t for t in titles)
-    ai = [p for p in props if p["payload"]["title"].startswith("Polymarket YES")]
+    ai = [p for p in props if " YES：" in p["payload"]["title"]]
     assert len(ai) == 1 and ai[0]["note"] == ""   # passes risk pre-check
     assert len(store.forecasts()) == 2
     assert store.scans(source="polymarket")[0]["opportunities"][0]["type"] == "pm_negrisk"

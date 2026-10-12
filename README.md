@@ -52,6 +52,55 @@ python -m arbdesk polymarket --no-llm
 
 ---
 
+## 二点五、美国合规预测市场：Kalshi 与 Polymarket US
+
+面板里每个预测市场平台各占一块，各自独立设置模拟盘/实盘、额度上限和 AI 打分。
+
+| | Kalshi | Polymarket US |
+|---|---|---|
+| 监管 | CFTC 指定合约市场 | CFTC 监管（与 polymarket.com 是两个独立的平台） |
+| 南卡州 | 可用 | 可用（州内有一起诉讼尚未判决） |
+| 自动多结果套利 | ✅ 只做"买全部 NO"方向（见下） | ❌ 没有互斥事件标记，不自动做 |
+| AI 概率评估 | ✅ | ✅ |
+| 实盘下单 | ✅ YES 和 NO，全成或全撤（FOK）；**默认连 demo 假钱环境** | ✅ 只买 YES（Long），全成或全撤（FOK） |
+| 密钥 | API Key ID + 私钥 PEM 文件 | Key ID + Ed25519 私钥（base64） |
+
+**Kalshi 的多结果套利只做"买全部 NO"：**
+- 在标记为互斥的事件里，最多只有一个结果会成真。
+- 每个结果各买 1 份 NO，至少兑付 N−1（没有结果成真时兑付 N）。成本扣完手续费后低于 N−1，就是锁定利润。
+- 反方向"买全部 YES"并不安全：结果可能不穷尽，也就是可能没有任何一个成真。所以这个方向**从不提议**。
+
+**Kalshi 实盘（建议顺序）：**
+1. 在 demo.kalshi.co 注册 demo 账户，在账户设置里创建 API Key，下载私钥 `.pem` 文件。
+2. 安装依赖并存入密钥：
+   ```bash
+   pip install -r requirements-live.txt
+   python -m arbdesk vault set KALSHI_API_KEY_ID
+   python -m arbdesk vault set-file KALSHI_PRIVATE_KEY 路径/kalshi-key.pem
+   ```
+   导入后删掉原 `.pem` 文件。
+3. `python -m arbdesk check kalshi`：检查连接和余额，不下单。
+4. `config.toml` 里设置 `[kalshi] mode = "live"`，保留 `environment = "demo"`，用假钱把下单、成交、结算完整跑几次。
+5. 确认一切正常后，在 kalshi.com 正式账户创建新的 API Key，替换保险库里的两项，再把 `environment` 改成 `"prod"`。
+
+**Polymarket US 实盘：**
+1. 在 Polymarket US App 里完成 KYC 并入金。
+2. 到 polymarket.us/developer 创建 API Key。私钥只显示一次，立刻存入保险库：
+   ```bash
+   python -m arbdesk vault set POLYMARKET_US_KEY_ID
+   python -m arbdesk vault set POLYMARKET_US_SECRET_KEY
+   ```
+3. `python -m arbdesk check polymarket_us`，然后设置 `[polymarket_us] mode = "live"`。
+4. Polymarket US 没有 demo 环境，**第一笔只下 1–2 份**，然后到 App 里核对成交和扣款。
+
+**常用命令：**
+```bash
+python -m arbdesk venue kalshi --no-llm          # 只跑 Kalshi：结算 → 扫描（不调用 AI）
+python -m arbdesk venue polymarket_us --no-llm
+```
+
+---
+
 ## 三、安全设计
 
 ### 1. 加密保险库（`data/vault.json`）
@@ -128,6 +177,9 @@ arbdesk/
   executor.py  模拟盘 / 实盘执行（需人工批准，实盘需输入 LIVE）
   vault.py     加密保险库（AES-256-GCM + scrypt）
   pm_live.py   Polymarket 实盘下单（CLOB V2 SDK，FOK，地区检查）
+  kalshi.py    Kalshi：数据、互斥事件 NO 组合套利、签名、FOK 下单
+  pmus.py      Polymarket US：数据、AI 候选、FOK 下单（官方 SDK）
+  venues.py    三个预测市场的统一接口
   service.py   扫描 → 分析 → 生成建议；每日定时
   storage.py   本地 SQLite
   web.py + static/  本地面板

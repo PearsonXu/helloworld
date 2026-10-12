@@ -14,7 +14,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from .polymarket import PolymarketConfig
+from .polymarket import PolymarketConfig, VenueConfig
 
 log = logging.getLogger(__name__)
 
@@ -78,10 +78,14 @@ class Secrets:
     pm_private_key: str = ""
     pm_funder: str = ""             # proxy / Safe wallet address shown on polymarket.com
     pm_signature_type: int = 1      # 0 EOA, 1 email/Magic proxy, 2 browser-wallet Safe
+    kalshi_key_id: str = ""
+    kalshi_private_key: str = ""    # PEM, vault only
+    pmus_key_id: str = ""
+    pmus_secret_key: str = ""       # base64 Ed25519, vault only
     source: str = "env"             # "env", "vault" or "vault+env"
 
     def all_values(self) -> list[str]:
-        vals = [self.llm_api_key, self.pm_private_key]
+        vals = [self.llm_api_key, self.pm_private_key, self.kalshi_private_key, self.pmus_secret_key]
         for creds in self.exchange_keys.values():
             vals.extend(creds.values())
         return [v for v in vals if v and len(v) >= 6]
@@ -90,7 +94,14 @@ class Secrets:
         return (f"Secrets(source={self.source!r}, llm_provider={self.llm_provider!r}, "
                 f"llm_key={'set' if self.llm_api_key else 'unset'}, "
                 f"exchanges={sorted(self.exchange_keys)}, "
-                f"polymarket_wallet={'set' if self.pm_private_key else 'unset'})")
+                f"polymarket_wallet={'set' if self.pm_private_key else 'unset'}, "
+                f"kalshi={'set' if self.kalshi_private_key else 'unset'}, "
+                f"polymarket_us={'set' if self.pmus_secret_key else 'unset'})")
+
+
+# Venue-specific defaults on top of VenueConfig's.
+KALSHI_DEFAULTS = {"environment": "demo", "min_liquidity_usd": 500}
+PMUS_DEFAULTS = {"min_liquidity_usd": 1000}
 
 
 @dataclass
@@ -102,6 +113,11 @@ class Settings:
     polymarket: PolymarketConfig
     secrets: Secrets
     data_dir: Path
+    kalshi: VenueConfig = field(default_factory=lambda: VenueConfig(**KALSHI_DEFAULTS))
+    polymarket_us: VenueConfig = field(default_factory=lambda: VenueConfig(**PMUS_DEFAULTS))
+
+    def venue_cfg(self, name: str) -> VenueConfig:
+        return {"polymarket": self.polymarket, "kalshi": self.kalshi, "polymarket_us": self.polymarket_us}[name]
 
     @property
     def allowed_symbols(self) -> list[str]:
@@ -117,7 +133,7 @@ def _check_private(path: Path) -> None:
         log.warning("%s is readable by other users; run: chmod 600 %s", path.name, path)
 
 
-PM_VAULT_ONLY = ("POLYMARKET_PRIVATE_KEY",)
+VAULT_ONLY = ("POLYMARKET_PRIVATE_KEY", "KALSHI_PRIVATE_KEY", "POLYMARKET_US_SECRET_KEY")
 
 
 def _load_secrets(env_path: Path, vault_data: dict[str, str] | None = None) -> Secrets:
@@ -125,7 +141,7 @@ def _load_secrets(env_path: Path, vault_data: dict[str, str] | None = None) -> S
     env = {**dotenv_values(env_path)} if env_path.exists() else {}
     # Real environment variables take precedence over the file.
     env.update({k: v for k, v in os.environ.items() if k.startswith(("LLM_", "EXCHANGE_"))})
-    for k in PM_VAULT_ONLY:
+    for k in VAULT_ONLY:
         if env.pop(k, None):
             log.warning("%s found in .env/environment and IGNORED: store it with "
                         "`python -m arbdesk vault set %s`", k, k)
@@ -135,7 +151,8 @@ def _load_secrets(env_path: Path, vault_data: dict[str, str] | None = None) -> S
         if overlap:
             log.warning("these secrets exist in both .env and the vault (vault wins); "
                         "delete them from .env: %s", ", ".join(overlap))
-        source = "vault+env" if any(env.get(k) for k in env if k.startswith(("LLM_API", "EXCHANGE_"))) else "vault"
+        source = "vault+env" if any(env.get(k) for k in env
+                                    if k.startswith(("LLM_API", "EXCHANGE_", "KALSHI_", "POLYMARKET_US_"))) else "vault"
         env.update({k: v for k, v in vault_data.items() if v})
 
     exchange_keys: dict[str, dict[str, str]] = {}
@@ -156,6 +173,10 @@ def _load_secrets(env_path: Path, vault_data: dict[str, str] | None = None) -> S
         pm_private_key=env.get("POLYMARKET_PRIVATE_KEY") or "",
         pm_funder=env.get("POLYMARKET_FUNDER") or "",
         pm_signature_type=int(env.get("POLYMARKET_SIGNATURE_TYPE") or 1),
+        kalshi_key_id=env.get("KALSHI_API_KEY_ID") or "",
+        kalshi_private_key=env.get("KALSHI_PRIVATE_KEY") or "",
+        pmus_key_id=env.get("POLYMARKET_US_KEY_ID") or "",
+        pmus_secret_key=env.get("POLYMARKET_US_SECRET_KEY") or "",
         source=source,
     )
 
@@ -179,11 +200,17 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         polymarket=PolymarketConfig(**raw.get("polymarket", {})),
         secrets=_load_secrets(env_path, vault_data),
         data_dir=data_dir,
+        kalshi=VenueConfig(**{**KALSHI_DEFAULTS, **raw.get("kalshi", {})}),
+        polymarket_us=VenueConfig(**{**PMUS_DEFAULTS, **raw.get("polymarket_us", {})}),
     )
     if settings.risk.mode not in ("paper", "live"):
         raise ValueError("risk.mode must be 'paper' or 'live'")
-    if settings.polymarket.mode not in ("paper", "live"):
-        raise ValueError("polymarket.mode must be 'paper' or 'live'")
+    for name in ("polymarket", "kalshi", "polymarket_us"):
+        vc = settings.venue_cfg(name)
+        if vc.mode not in ("paper", "live"):
+            raise ValueError(f"{name}.mode must be 'paper' or 'live'")
+    if settings.kalshi.environment not in ("demo", "prod"):
+        raise ValueError("kalshi.environment must be 'demo' or 'prod'")
     return settings
 
 

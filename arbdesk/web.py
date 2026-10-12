@@ -93,7 +93,8 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
                     "max_calls_per_day": settings.llm.max_calls_per_day},
             "today": store.today_stats(),
             "running": desk.running,
-            "polymarket_mode": settings.polymarket.mode,
+            "venues": {n: {"label": v.label, "mode": v.cfg.mode, "environment": v.cfg.environment}
+                       for n, v in desk.venues.items()},
             "halted": store.halted(),
             "secrets_source": settings.secrets.source,
         }
@@ -102,11 +103,15 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
     def scans(limit: int = 10):
         return store.scans(min(limit, 50), source="crypto")
 
-    @app.get("/api/polymarket", dependencies=[Depends(auth)])
-    def polymarket():
-        latest = store.scans(1, source="polymarket")
-        return {"enabled": settings.polymarket.enabled, "scan": latest[0] if latest else None,
-                "forecasts": store.forecasts(50), "scores": store.forecast_scores()}
+    @app.get("/api/venues", dependencies=[Depends(auth)])
+    def venues():
+        out = []
+        for name, v in desk.venues.items():
+            latest = store.scans(1, source=name)
+            out.append({"name": name, "label": v.label, "mode": v.cfg.mode, "environment": v.cfg.environment,
+                        "scan": latest[0] if latest else None,
+                        "forecasts": store.forecasts(30, venue=name), "scores": store.forecast_scores(name)})
+        return out
 
     @app.get("/api/analyses", dependencies=[Depends(auth)])
     def analyses(limit: int = 10):

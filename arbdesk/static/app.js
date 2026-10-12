@@ -41,15 +41,16 @@ async function refresh() {
     ? `AI ${s.llm.provider}/${s.llm.model} · 今日 ${s.llm.calls_today}/${s.llm.max_calls_per_day}`
     : "AI 未配置";
   $("times").textContent = "定时 " + s.scan_times.join(" / ");
-  const pmLive = s.polymarket_mode === "live";
-  $("pmmode").textContent = pmLive ? "Polymarket 实盘 LIVE" : "Polymarket 模拟";
-  $("pmmode").className = "pill " + (pmLive ? "live" : "paper");
-  $("pmmodeLabel").textContent = pmLive ? "（实盘：真钱）" : "（模拟盘）";
+  $("venuePills").innerHTML = Object.values(s.venues).map((v) => {
+    const live = v.mode === "live";
+    const env = v.environment === "demo" && live ? "（demo 假钱）" : "";
+    return `<span class="pill ${live ? "live" : "paper"}">${esc(v.label)} ${live ? "实盘" + env : "模拟"}</span>`;
+  }).join("");
   $("secsrc").textContent = { vault: "密钥：加密保险库", "vault+env": "密钥：保险库 + .env（建议迁移）", env: "密钥：.env 明文" }[s.secrets_source] || s.secrets_source;
   $("haltBanner").style.display = s.halted ? "" : "none";
   $("haltReason").textContent = s.halted ? `原因：${s.halted}` : "";
   $("halt").style.display = s.halted ? "none" : "";
-  window.__live = { crypto: s.mode === "live", pm: pmLive };
+  window.__live = { crypto: s.mode === "live", venues: s.venues };
   $("run").disabled = $("runScan").disabled = s.running;
   $("run").textContent = s.running ? "运行中…" : "立即扫描 + AI 分析";
   const pnlCls = s.today.pnl_usd >= 0 ? "good" : "bad";
@@ -85,14 +86,19 @@ async function refresh() {
   }
 
   $("proposals").innerHTML = proposals.map((p) => {
-    const legs = (p.payload.legs || []).map((l) => l.exchange === "polymarket"
-      ? `Polymarket 买 ${esc(l.outcome)} · ${esc(l.label)} · ${esc(l.shares)} 份 @ ≤${esc(l.limit_price)}`
+    const isPred = (l) => l.token_id !== undefined;
+    const legs = (p.payload.legs || []).map((l) => isPred(l)
+      ? `${esc(VENUE_LABEL[l.exchange] || l.exchange)} 买 ${esc(l.outcome)} · ${esc(l.label)} · ${esc(l.shares)} 份 @ ≤${esc(l.limit_price)}`
       : `${esc(l.exchange)} ${esc(l.market || "spot")} ${esc(l.side)} ${esc(l.symbol)} $${esc(l.usd)}`).join("<br>");
-    const pmLegs = (p.payload.legs || []).some((l) => l.exchange === "polymarket");
-    const live = pmLegs ? window.__live.pm : window.__live.crypto;
-    const cost = (p.payload.legs || []).reduce((t, l) => t + (l.exchange === "polymarket" ? l.shares * l.limit_price : +l.usd || 0), 0);
+    const first = (p.payload.legs || [])[0] || {};
+    const venue = window.__live.venues[first.exchange];
+    const live = venue ? venue.mode === "live" : window.__live.crypto;
+    const cost = (p.payload.legs || []).reduce((t, l) => t + (isPred(l) ? l.shares * l.limit_price : +l.usd || 0), 0);
+    const demo = venue && venue.environment === "demo" && first.exchange === "kalshi";
+    const liveLabel = demo ? "批准（Kalshi demo 假钱）" : "批准（真钱）";
+    const costLabel = `约 $${cost.toFixed(2)}${demo ? "，Kalshi demo 假钱" : "，真钱"}`;
     const actions = p.status === "pending"
-      ? `<button data-act="approve" data-id="${p.id}" data-live="${live ? 1 : 0}" data-cost="约 $${cost.toFixed(2)}" class="${live ? "danger" : ""}">${live ? "批准（真钱）" : "批准执行"}</button> <button class="danger" data-act="reject" data-id="${p.id}">拒绝</button>`
+      ? `<button data-act="approve" data-id="${p.id}" data-live="${live ? 1 : 0}" data-cost="${costLabel}" class="${live ? "danger" : ""}">${live ? liveLabel : "批准执行"}</button> <button class="danger" data-act="reject" data-id="${p.id}">拒绝</button>`
       : `<span class="${p.status === "partial" ? "bad" : "muted"}">${esc(p.status)}</span>`;
     return `<div class="card"><div class="row"><b>#${p.id} ${esc(p.payload.title)}</b>
       <span class="muted">置信度 ${esc(p.payload.confidence)}</span><span style="flex:1"></span>${actions}</div>
@@ -101,38 +107,52 @@ async function refresh() {
       ${p.note ? `<div class="warn">${esc(p.note)}</div>` : ""}</div>`;
   }).join("") || `<p class="muted">暂无</p>`;
 
-  await renderPolymarket();
+  await renderVenues();
 
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
     <td>${num(t.cost_usd)}</td><td>${num(t.fee_usd, 4)}</td><td>${num(t.pnl_usd, 4)}</td></tr>`).join("");
 }
 
-async function renderPolymarket() {
-  const pm = await api("/api/polymarket");
-  $("pmSection").style.display = pm.enabled ? "" : "none";
-  if (!pm.enabled) return;
-  const sc = pm.scores;
-  const better = sc.ai_brier != null && sc.ai_brier < sc.market_brier;
-  $("pmstats").innerHTML = `
-    <div class="stat"><b>${sc.resolved}</b><span>已结算的 AI 预测</span></div>
-    <div class="stat"><b class="${sc.ai_brier == null ? "" : better ? "good" : "bad"}">${num(sc.ai_brier, 4)}</b><span>AI Brier（越低越准）</span></div>
-    <div class="stat"><b>${num(sc.market_brier, 4)}</b><span>市场价 Brier</span></div>`;
-  const s = pm.scan;
-  if (s) {
-    const errs = Object.keys(s.summary.errors || {});
-    $("pmmeta").textContent = `${s.ts} · 事件 ${s.summary.events ?? "—"} · negRisk ${s.summary.negrisk_events ?? "—"}` +
-      ` · 初筛 ${s.summary.screened ?? "—"}` + (errs.length ? ` · 失败: ${errs.join(", ")}` : "");
-    $("pmopps").innerHTML = s.opportunities.map((o) => `<tr>
-      <td><a href="https://polymarket.com/event/${encodeURIComponent(o.slug)}" target="_blank" rel="noopener noreferrer">${esc(o.title)}</a></td>
+const VENUE_LABEL = { polymarket: "Polymarket（国际）", kalshi: "Kalshi", polymarket_us: "Polymarket US" };
+
+async function renderVenues() {
+  const venues = await api("/api/venues");
+  $("venues").innerHTML = venues.map((v) => {
+    const sc = v.scores;
+    const better = sc.ai_brier != null && sc.ai_brier < sc.market_brier;
+    const s = v.scan;
+    const errs = s ? Object.keys(s.summary.errors || {}) : [];
+    const meta = s ? `${s.ts} · 事件 ${s.summary.events ?? "—"} · 互斥事件 ${s.summary.negrisk_events ?? "—"} · 初筛 ${s.summary.screened ?? "—"}` +
+      (errs.length ? ` · 失败: ${errs.join(", ")}` : "") : "尚未扫描";
+    const mode = v.mode === "live" ? (v.environment === "demo" ? "（实盘 · Kalshi demo 假钱）" : "（实盘：真钱）") : "（模拟盘）";
+    const opps = s ? s.opportunities.map((o) => `<tr>
+      <td><a href="${esc(o.url || "#")}" target="_blank" rel="noopener noreferrer">${esc(o.title)}</a></td>
       <td>买全部 ${o.direction === "buy_yes" ? "YES" : "NO"}（${esc(o.outcomes)} 个）</td><td>${num(o.shares)}</td>
-      <td>${num(o.cost_usd)}</td><td>${num(o.payout_usd)}</td><td class="good">$${num(o.profit_usd, 3)} (${esc(o.net_pct)}%)</td></tr>`).join("")
-      || `<tr><td colspan="6" class="muted">本次没有扣费后仍有利润的组合（大部分时候都是这样）</td></tr>`;
-  }
-  $("pmforecasts").innerHTML = pm.forecasts.map((f) => `<tr><td>${esc(f.ts.slice(0, 16))}</td>
-    <td>${esc(f.question)}</td><td>${num(f.market_prob)}</td><td>${num(f.ai_prob)}</td><td>${num(f.confidence)}</td>
-    <td>${f.outcome == null ? '<span class="muted">未结算</span>' : f.outcome ? "YES" : "NO"}</td>
-    <td class="muted">${esc(f.rationale)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">暂无</td></tr>`;
+      <td>${num(o.cost_usd)}</td><td>${o.direction === "buy_no" && v.name === "kalshi" ? "≥" : ""}${num(o.payout_usd)}</td>
+      <td class="good">$${num(o.profit_usd, 3)} (${esc(o.net_pct)}%)</td></tr>`).join("") : "";
+    const noArb = v.name === "polymarket_us"
+      ? "Polymarket US 没有互斥事件标记，不自动做多结果套利；这里只做 AI 概率评估"
+      : "本次没有扣费后仍有利润的组合（大部分时候都是这样）";
+    const fc = v.forecasts.map((f) => `<tr><td>${esc(f.ts.slice(0, 16))}</td>
+      <td>${esc(f.question)}</td><td>${num(f.market_prob)}</td><td>${num(f.ai_prob)}</td><td>${num(f.confidence)}</td>
+      <td>${f.outcome == null ? '<span class="muted">未结算</span>' : f.outcome ? "YES" : "NO"}</td>
+      <td class="muted">${esc(f.rationale)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">暂无</td></tr>`;
+    return `<section>
+      <h2>${esc(v.label)} <span class="muted">${mode}</span> <span class="muted">${esc(meta)}</span></h2>
+      <div class="stats">
+        <div class="stat"><b>${sc.resolved}</b><span>已结算的 AI 预测</span></div>
+        <div class="stat"><b class="${sc.ai_brier == null ? "" : better ? "good" : "bad"}">${num(sc.ai_brier, 4)}</b><span>AI Brier（越低越准）</span></div>
+        <div class="stat"><b>${num(sc.market_brier, 4)}</b><span>市场价 Brier</span></div>
+      </div>
+      <h3 style="font-size:14px;margin:14px 0 6px">多结果套利</h3>
+      <table><thead><tr><th>事件</th><th>方向</th><th>份数</th><th>成本$</th><th>兑付$</th><th>利润</th></tr></thead>
+        <tbody>${opps || `<tr><td colspan="6" class="muted">${noArb}</td></tr>`}</tbody></table>
+      <h3 style="font-size:14px;margin:14px 0 6px">AI 概率评估记录</h3>
+      <table><thead><tr><th>时间</th><th>问题</th><th>市场价</th><th>AI 概率</th><th>置信度</th><th>结果</th><th>理由</th></tr></thead>
+        <tbody>${fc}</tbody></table>
+    </section>`;
+  }).join("");
 }
 
 document.addEventListener("click", async (e) => {
@@ -143,7 +163,7 @@ document.addEventListener("click", async (e) => {
   let body = {};
   if (act === "approve") {
     if (isLive) {
-      const typed = prompt(`⚠️ 建议 #${id} 将用真钱下单（${b.dataset.cost}）。\n确认请输入大写 LIVE：`);
+      const typed = prompt(`⚠️ 建议 #${id} 将实际下单（${b.dataset.cost}）。\n确认请输入大写 LIVE：`);
       if (typed !== "LIVE") return;
       body = { confirm_live: "LIVE" };
     } else if (!confirm(`确认执行建议 #${id}（模拟）？`)) return;
@@ -157,7 +177,7 @@ document.addEventListener("click", async (e) => {
 });
 $("run").onclick = () => api("/api/run", { use_llm: true }).then(refresh);
 $("halt").onclick = () => confirm("立即停止所有实盘下单？") && api("/api/halt", {}).then(refresh);
-$("resume").onclick = () => confirm("确认已在交易所/Polymarket 检查过持仓，恢复实盘？") && api("/api/resume", {}).then(refresh);
+$("resume").onclick = () => confirm("确认已在交易所 / 预测市场检查过持仓，恢复实盘？") && api("/api/resume", {}).then(refresh);
 $("runScan").onclick = () => api("/api/run", { use_llm: false }).then(refresh);
 
 refresh().catch(() => {});

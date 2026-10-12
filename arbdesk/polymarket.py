@@ -48,6 +48,11 @@ class PolymarketConfig:
     max_live_usd_per_day: float = 20    # total live spend per UTC day
     max_live_exposure_usd: float = 50   # cost of all unresolved live positions
     price_tolerance: float = 0.01       # max price above the proposal's limit
+    environment: str = "prod"           # Kalshi only: "demo" (fake money) or "prod"
+
+
+# The same settings shape is used for every prediction venue ([polymarket], [kalshi], [polymarket_us]).
+VenueConfig = PolymarketConfig
 
 
 # --------------------------------------------------------------------------
@@ -204,6 +209,7 @@ def negrisk_opportunity(event: dict, books: dict[str, dict], direction: str,
         "type": "pm_negrisk",
         "venue": "polymarket",
         "event_id": event["id"], "title": event["title"], "slug": event["slug"],
+        "url": f"https://polymarket.com/event/{event['slug']}",
         "direction": direction, "outcomes": n,
         "shares": shares,
         "cost_usd": round(res["cost"], 4), "payout_usd": round(res["payout"], 4),

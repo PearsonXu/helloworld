@@ -1,3 +1,5 @@
 -r requirements.txt
 # Official Polymarket CLOB V2 SDK (legacy py-clob-client stopped working at the 2026-04 V2 cutover)
 py-clob-client-v2==1.2.0
+# Official Polymarket US SDK (Ed25519-signed API at api.polymarket.us)
+polymarket-us==2.4.1

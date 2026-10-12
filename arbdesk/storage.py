@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS flags (
 CREATE TABLE IF NOT EXISTS pm_forecasts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
+    venue TEXT NOT NULL DEFAULT 'polymarket',
     market_id TEXT NOT NULL,
     question TEXT NOT NULL,
     end_date TEXT,
@@ -84,6 +85,9 @@ class Store:
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(scans)")}
             if "source" not in cols:  # databases created before the Polymarket module
                 self.conn.execute("ALTER TABLE scans ADD COLUMN source TEXT NOT NULL DEFAULT 'crypto'")
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(pm_forecasts)")}
+            if "venue" not in cols:  # databases created before Kalshi / Polymarket US
+                self.conn.execute("ALTER TABLE pm_forecasts ADD COLUMN venue TEXT NOT NULL DEFAULT 'polymarket'")
         if new and os.name == "posix":
             os.chmod(path, 0o600)
 
@@ -183,46 +187,51 @@ class Store:
         f = self.get_flag("halt")
         return f["value"] if f and f["value"] else None
 
-    def live_pm_spent_today(self) -> float:
+    def live_spent_today(self, venue: str) -> float:
         row = self._rows("SELECT COALESCE(SUM(cost_usd + fee_usd), 0) AS s FROM trades "
-                         "WHERE exchange = 'polymarket' AND mode = 'live' AND ts LIKE ?",
-                         (now_iso()[:10] + "%",))[0]
+                         "WHERE exchange = ? AND mode = 'live' AND ts LIKE ?",
+                         (venue, now_iso()[:10] + "%"))[0]
         return row["s"]
 
-    def live_pm_open_exposure(self) -> float:
+    def live_open_exposure(self, venue: str) -> float:
         row = self._rows("SELECT COALESCE(SUM(cost_usd + fee_usd), 0) AS s FROM trades "
-                         "WHERE exchange = 'polymarket' AND mode = 'live' AND pnl_usd IS NULL")[0]
+                         "WHERE exchange = ? AND mode = 'live' AND pnl_usd IS NULL", (venue,))[0]
         return row["s"]
 
-    def open_pm_trades(self) -> list[dict]:
-        return self._rows("SELECT * FROM trades WHERE exchange = 'polymarket' AND pnl_usd IS NULL")
+    def open_venue_trades(self, venue: str) -> list[dict]:
+        """Unsettled prediction-market positions (paper and live) on one venue."""
+        return self._rows("SELECT * FROM trades WHERE exchange = ? AND pnl_usd IS NULL", (venue,))
 
     def settle_trade(self, tid: int, pnl: float) -> None:
         with self.lock, self.conn:
             self.conn.execute("UPDATE trades SET pnl_usd = ? WHERE id = ?", (pnl, tid))
 
-    # polymarket forecasts ----------------------------------------------
-    def add_forecast(self, **f) -> int:
+    # prediction-market forecasts ----------------------------------------
+    def add_forecast(self, venue: str = "polymarket", **f) -> int:
         cols = ["market_id", "question", "end_date", "market_prob", "ai_prob", "confidence", "rationale"]
         return self._insert(
-            f"INSERT INTO pm_forecasts (ts, {', '.join(cols)}) VALUES (?, {', '.join('?' * len(cols))})",
-            (now_iso(), *[f.get(c) for c in cols]),
+            f"INSERT INTO pm_forecasts (ts, venue, {', '.join(cols)}) VALUES (?, ?, {', '.join('?' * len(cols))})",
+            (now_iso(), venue, *[f.get(c) for c in cols]),
         )
 
-    def forecasts(self, limit: int = 100) -> list[dict]:
+    def forecasts(self, limit: int = 100, venue: str | None = None) -> list[dict]:
+        if venue:
+            return self._rows("SELECT * FROM pm_forecasts WHERE venue = ? ORDER BY id DESC LIMIT ?", (venue, limit))
         return self._rows("SELECT * FROM pm_forecasts ORDER BY id DESC LIMIT ?", (limit,))
 
-    def unresolved_forecast_markets(self) -> list[str]:
-        return [r["market_id"] for r in
-                self._rows("SELECT DISTINCT market_id FROM pm_forecasts WHERE outcome IS NULL")]
+    def unresolved_forecast_markets(self, venue: str) -> list[str]:
+        return [r["market_id"] for r in self._rows(
+            "SELECT DISTINCT market_id FROM pm_forecasts WHERE outcome IS NULL AND venue = ?", (venue,))]
 
-    def resolve_forecasts(self, market_id: str, outcome: int) -> None:
+    def resolve_forecasts(self, venue: str, market_id: str, outcome: int) -> None:
         with self.lock, self.conn:
             self.conn.execute("UPDATE pm_forecasts SET outcome = ?, resolved_ts = ? "
-                              "WHERE market_id = ? AND outcome IS NULL", (outcome, now_iso(), market_id))
+                              "WHERE venue = ? AND market_id = ? AND outcome IS NULL",
+                              (outcome, now_iso(), venue, market_id))
 
-    def forecast_scores(self) -> dict:
-        rows = self._rows("SELECT ai_prob, market_prob, outcome FROM pm_forecasts WHERE outcome IS NOT NULL")
+    def forecast_scores(self, venue: str | None = None) -> dict:
+        sql = "SELECT ai_prob, market_prob, outcome FROM pm_forecasts WHERE outcome IS NOT NULL"
+        rows = self._rows(sql + " AND venue = ?", (venue,)) if venue else self._rows(sql)
         n = len(rows)
         if not n:
             return {"resolved": 0, "ai_brier": None, "market_brier": None}

@@ -6,6 +6,9 @@ from .config import Settings
 from .storage import Store
 
 MAX_LEGS = 4
+MAX_PREDICTION_LEGS = 30
+PREDICTION_VENUES = ("polymarket", "kalshi", "polymarket_us")
+LIVE_YES_ONLY = {"polymarket_us"}
 
 
 def validate(payload: dict, settings: Settings, store: Store) -> tuple[list[dict], list[str]]:
@@ -16,20 +19,13 @@ def validate(payload: dict, settings: Settings, store: Store) -> tuple[list[dict
     if not isinstance(legs_in, list) or not legs_in:
         return [], ["proposal has no legs"]
 
-    is_pm = [isinstance(l, dict) and str(l.get("exchange", "")).lower() == "polymarket" for l in legs_in]
-    if any(is_pm):
-        if not all(is_pm):
-            return [], ["cannot mix Polymarket and exchange legs in one proposal"]
-        legs, errors = _validate_polymarket(legs_in, settings)
-        if settings.polymarket.mode == "live" and legs:
-            total = sum(l["usd"] for l in legs)
-            pm = settings.polymarket
-            if store.live_pm_spent_today() + total > pm.max_live_usd_per_day:
-                errors.append(f"would exceed polymarket.max_live_usd_per_day ({pm.max_live_usd_per_day})")
-            if store.live_pm_open_exposure() + total > pm.max_live_exposure_usd:
-                errors.append(f"would exceed polymarket.max_live_exposure_usd ({pm.max_live_exposure_usd})")
-            if not settings.secrets.pm_private_key:
-                errors.append("live Polymarket needs POLYMARKET_PRIVATE_KEY in the vault")
+    names = [str(l.get("exchange", "")).lower() if isinstance(l, dict) else "" for l in legs_in]
+    if any(n in PREDICTION_VENUES for n in names):
+        if len(set(names)) != 1:
+            return [], ["all legs must be on the same prediction venue (no mixing with exchanges)"]
+        legs, errors = _validate_prediction(legs_in, names[0], settings)
+        if settings.venue_cfg(names[0]).mode == "live" and legs:
+            errors += _live_prediction_checks(legs, names[0], settings, store)
     else:
         legs = _validate_exchange_legs(legs_in, settings, errors)
 
@@ -49,24 +45,43 @@ def validate(payload: dict, settings: Settings, store: Store) -> tuple[list[dict
 def is_live(legs: list[dict], settings: Settings) -> bool:
     if not legs:
         return False
-    if legs[0]["exchange"] == "polymarket":
-        return settings.polymarket.mode == "live"
+    if legs[0]["exchange"] in PREDICTION_VENUES:
+        return settings.venue_cfg(legs[0]["exchange"]).mode == "live"
     return settings.risk.mode == "live"
 
 
-def _validate_polymarket(legs_in: list[dict], settings: Settings) -> tuple[list[dict], list[str]]:
-    """Polymarket legs: always paper-traded; multi-outcome bundles may exceed MAX_LEGS."""
-    pm = settings.polymarket
+def _live_prediction_checks(legs: list[dict], venue: str, settings: Settings, store: Store) -> list[str]:
+    cfg, sec, errors = settings.venue_cfg(venue), settings.secrets, []
+    total = sum(l["usd"] for l in legs)
+    if store.live_spent_today(venue) + total > cfg.max_live_usd_per_day:
+        errors.append(f"would exceed {venue}.max_live_usd_per_day ({cfg.max_live_usd_per_day})")
+    if store.live_open_exposure(venue) + total > cfg.max_live_exposure_usd:
+        errors.append(f"would exceed {venue}.max_live_exposure_usd ({cfg.max_live_exposure_usd})")
+    missing = {
+        "polymarket": not sec.pm_private_key,
+        "kalshi": not (sec.kalshi_key_id and sec.kalshi_private_key),
+        "polymarket_us": not (sec.pmus_key_id and sec.pmus_secret_key),
+    }[venue]
+    if missing:
+        errors.append(f"live {venue} needs its API credentials in the vault")
+    if venue in LIVE_YES_ONLY and any(l["outcome"] != "YES" for l in legs):
+        errors.append(f"live {venue} orders can only buy YES")
+    return errors
+
+
+def _validate_prediction(legs_in: list[dict], venue: str, settings: Settings) -> tuple[list[dict], list[str]]:
+    """Prediction-market legs (buy-only). Multi-outcome bundles may exceed MAX_LEGS."""
+    cfg = settings.venue_cfg(venue)
     errors: list[str] = []
-    if not pm.enabled:
-        return [], ["polymarket module disabled"]
-    if len(legs_in) > 30:
-        errors.append("too many Polymarket legs (max 30)")
+    if not cfg.enabled:
+        return [], [f"{venue} is disabled in config.toml"]
+    if len(legs_in) > MAX_PREDICTION_LEGS:
+        errors.append(f"too many legs (max {MAX_PREDICTION_LEGS})")
     legs = []
-    for i, leg in enumerate(legs_in[:30]):
+    for i, leg in enumerate(legs_in[:MAX_PREDICTION_LEGS]):
         try:
             norm = {
-                "exchange": "polymarket",
+                "exchange": venue,
                 "market_id": str(leg["market_id"]),
                 "token_id": str(leg["token_id"]),
                 "outcome": str(leg.get("outcome", "YES")).upper(),
@@ -80,13 +95,15 @@ def _validate_polymarket(legs_in: list[dict], settings: Settings) -> tuple[list[
             continue
         if norm["side"] != "buy":
             errors.append(f"leg {i}: only buys are supported")
+        if norm["outcome"] not in ("YES", "NO"):
+            errors.append(f"leg {i}: outcome must be YES or NO")
         if not 0 < norm["limit_price"] < 1:
             errors.append(f"leg {i}: limit_price must be in (0, 1)")
         if norm["shares"] <= 0:
             errors.append(f"leg {i}: shares must be > 0")
         norm["usd"] = norm["shares"] * norm["limit_price"]
-        if norm["usd"] > pm.max_usd_per_market:
-            errors.append(f"leg {i}: ${norm['usd']:.2f} exceeds polymarket.max_usd_per_market")
+        if norm["usd"] > cfg.max_usd_per_market:
+            errors.append(f"leg {i}: ${norm['usd']:.2f} exceeds {venue}.max_usd_per_market")
         legs.append(norm)
     return legs, errors
 

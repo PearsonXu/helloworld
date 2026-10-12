@@ -2,6 +2,8 @@
 # Windows paths: use forward slashes or single quotes, e.g. data_dir = 'D:\arbdesk-data'
 
 [scan]
+# US residents: binance/okx/bybit don't serve the US. US-available ccxt ids:
+# exchanges = ["coinbase", "kraken", "gemini", "binanceus"]
 exchanges = ["binance", "okx", "bybit", "gate", "kucoin"]   # ccxt ids
 symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT"]
 times = ["08:00", "14:00", "20:00"]      # local time, daily
@@ -30,8 +32,8 @@ temperature = 0.2
 host = "127.0.0.1"             # loopback only; enforced
 port = 8765
 
-[polymarket]                   # paper trading only; public data, no wallet
-enabled = true
+[polymarket]                   # polymarket.com (international). NOT available to US residents.
+enabled = true                 # US users: set false (or keep for paper research only)
 max_events = 200               # top events by 24h volume
 min_liquidity_usd = 5000       # for AI forecast candidates
 taker_fee_rate = 0.07          # fee/share = rate * p * (1-p); conservative, check official docs
@@ -45,3 +47,45 @@ mode = "paper"                 # "live" sends real orders after you type LIVE to
 max_live_usd_per_day = 20
 max_live_exposure_usd = 50     # total cost of unresolved live positions
 price_tolerance = 0.01         # max price above the proposal's limit (FOK orders)
+
+# ---------------------------------------------------------------------------
+# Kalshi — CFTC-regulated, available in most US states (incl. South Carolina).
+# Live keys: kalshi.com -> Account -> API keys. Store in the vault:
+#   python -m arbdesk vault set KALSHI_API_KEY_ID
+#   python -m arbdesk vault set-file KALSHI_PRIVATE_KEY path/to/kalshi-key.pem
+[kalshi]
+enabled = true
+environment = "demo"           # "demo" = fake money on demo.kalshi.co (separate demo account + keys);
+                               # switch to "prod" only after demo works end to end
+mode = "paper"                 # "live" sends FOK orders to `environment`, after you type LIVE
+max_events = 200
+min_liquidity_usd = 500        # open interest (contracts) for AI forecast candidates
+taker_fee_rate = 0.07          # fee = ceil(0.07 * C * P * (1-P)) per order; some series differ
+min_arb_profit_pct = 0.5
+max_usd_per_market = 20
+ai_markets_per_run = 8
+ai_min_edge = 0.08
+ai_horizon_days = [1, 60]
+max_live_usd_per_day = 20
+max_live_exposure_usd = 50
+price_tolerance = 0.01
+
+# ---------------------------------------------------------------------------
+# Polymarket US — CFTC-regulated app (separate from polymarket.com), KYC in the app.
+# API keys: polymarket.us/developer. Store in the vault:
+#   python -m arbdesk vault set POLYMARKET_US_KEY_ID
+#   python -m arbdesk vault set POLYMARKET_US_SECRET_KEY
+# Live orders only buy YES (long); no automatic bundle arbitrage on this venue.
+[polymarket_us]
+enabled = true
+mode = "paper"
+max_events = 200
+min_liquidity_usd = 1000
+taker_fee_rate = 0.07          # conservative placeholder; check Polymarket US fee schedule
+max_usd_per_market = 20
+ai_markets_per_run = 8
+ai_min_edge = 0.08
+ai_horizon_days = [1, 60]
+max_live_usd_per_day = 20
+max_live_exposure_usd = 50
+price_tolerance = 0.01

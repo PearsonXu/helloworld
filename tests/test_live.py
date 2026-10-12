@@ -9,6 +9,7 @@ from arbdesk.config import load_settings
 from arbdesk.executor import Executor
 from arbdesk.pm_live import LiveFill, LiveTradingError, PolymarketTrader, check_geoblock
 from arbdesk.storage import Store
+from arbdesk.venues import PolymarketVenue
 from arbdesk.vault import Vault, VaultError
 
 FAST = {"n": 2 ** 14, "r": 8, "p": 1}
@@ -128,6 +129,11 @@ class FakeTrader:
         self.cancelled = True
 
 
+def wire(ex, books):
+    """Point the executor's Polymarket venue at fake order books."""
+    ex._venues["polymarket"] = PolymarketVenue(ex.settings.polymarket, ex.settings, client=books)
+
+
 def leg(token, shares=10, price=0.3, market="m1"):
     return {"exchange": "polymarket", "market_id": market, "token_id": token, "outcome": "YES",
             "label": token, "side": "buy", "shares": shares, "limit_price": price}
@@ -144,39 +150,39 @@ def live(cfg_files):
 
 def test_live_requires_confirmation(live):
     s, store, ex = live
-    ex.pm = FakeBooks({"a": book([(0.3, 100)])})
-    ex._pm_trader = FakeTrader()
+    wire(ex, FakeBooks({"a": book([(0.3, 100)])}))
+    ex._traders["polymarket"] = FakeTrader()
     pid = store.add_proposal(None, {"title": "x", "legs": [leg("a")]})
     r = ex.execute(pid)
     assert r["needs_confirm"] and store.proposal(pid)["status"] == "pending"
-    assert ex._pm_trader.orders == []
+    assert ex._traders["polymarket"].orders == []
     r = ex.execute(pid, confirm_live=True)
-    assert r["ok"] and ex._pm_trader.orders == ["a"]
+    assert r["ok"] and ex._traders["polymarket"].orders == ["a"]
     t = store.trades()[0]
     assert t["mode"] == "live" and t["order_id"] == "o-a"
 
 
 def test_live_preflight_blocks_without_sending(live):
     s, store, ex = live
-    ex.pm = FakeBooks({"a": book([(0.3, 100)]), "b": book([(0.5, 100)])})  # b moved above limit
-    ex._pm_trader = FakeTrader()
+    wire(ex, FakeBooks({"a": book([(0.3, 100)]), "b": book([(0.5, 100)])}))  # b moved above limit
+    ex._traders["polymarket"] = FakeTrader()
     pid = store.add_proposal(None, {"title": "x", "legs": [leg("a"), leg("b")]})
     r = ex.execute(pid, confirm_live=True)
     assert not r["ok"] and "nothing sent" in r["errors"][0]
-    assert ex._pm_trader.orders == [] and store.trades() == []
+    assert ex._traders["polymarket"].orders == [] and store.trades() == []
 
-    ex.pm = FakeBooks({"a": book([(0.3, 100)])})
-    ex._pm_trader = FakeTrader(balance=1.0)
+    wire(ex, FakeBooks({"a": book([(0.3, 100)])}))
+    ex._traders["polymarket"] = FakeTrader(balance=1.0)
     pid = store.add_proposal(None, {"title": "y", "legs": [leg("a")]})
     r = ex.execute(pid, confirm_live=True)
-    assert not r["ok"] and "balance" in r["errors"][0] and ex._pm_trader.orders == []
+    assert not r["ok"] and "balance" in r["errors"][0] and ex._traders["polymarket"].orders == []
 
 
 def test_partial_fill_halts_everything(live):
     s, store, ex = live
-    ex.pm = FakeBooks({"a": book([(0.3, 100)]), "b": book([(0.3, 12)])})
+    wire(ex, FakeBooks({"a": book([(0.3, 100)]), "b": book([(0.3, 12)])}))
     trader = FakeTrader(fail_on="a")
-    ex._pm_trader = trader
+    ex._traders["polymarket"] = trader
     pid = store.add_proposal(None, {"title": "bundle", "legs": [leg("a"), leg("b")]})
     r = ex.execute(pid, confirm_live=True)
     # b has the thinnest book, so it is sent first and fills; a then fails.
@@ -292,9 +298,9 @@ def test_live_without_wallet_fails_cleanly(cfg_files):
     s = load_settings(cfg_files / "config.toml", cfg_files / ".env")
     store = Store(s.data_dir / "t.db")
     ex = Executor(s, store)
-    ex.pm = FakeBooks({"a": book([(0.3, 100)])})
+    wire(ex, FakeBooks({"a": book([(0.3, 100)])}))
     pid = store.add_proposal(None, {"title": "x", "legs": [leg("a")]})
     store.set_proposal_status(pid, "pending")
     legs, _ = risk.validate(store.proposal(pid)["payload"], s, store)
-    r = ex._execute_polymarket_live(pid, legs)   # bypass risk to hit the trader path directly
+    r = ex._execute_venue_live(pid, legs, ex.venue("polymarket"))   # bypass risk to hit the trader path directly
     assert not r["ok"] and "nothing sent" in r["errors"][0]
