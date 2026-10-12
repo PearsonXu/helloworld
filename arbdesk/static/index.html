@@ -67,9 +67,19 @@
     <div id="analysis" class="muted">暂无</div>
   </section>
   <section>
-    <h2>最新扫描 <span class="muted" id="scanmeta"></span></h2>
+    <h2>最新加密货币扫描 <span class="muted" id="scanmeta"></span></h2>
     <table><thead><tr><th>类型</th><th>标的</th><th>详情</th><th>净收益</th><th>备注</th></tr></thead>
       <tbody id="opps"></tbody></table>
+  </section>
+  <section id="pmSection">
+    <h2>Polymarket <span class="muted">（仅模拟盘）</span> <span class="muted" id="pmmeta"></span></h2>
+    <div class="stats" id="pmstats"></div>
+    <h3 style="font-size:14px;margin:14px 0 6px">多结果套利（negRisk：买齐所有结果，兑付固定）</h3>
+    <table><thead><tr><th>事件</th><th>方向</th><th>份数</th><th>成本$</th><th>兑付$</th><th>利润</th></tr></thead>
+      <tbody id="pmopps"></tbody></table>
+    <h3 style="font-size:14px;margin:14px 0 6px">AI 概率评估记录（用于检验 AI 是否真的比市场准）</h3>
+    <table><thead><tr><th>时间</th><th>问题</th><th>市场价</th><th>AI 概率</th><th>置信度</th><th>结果</th><th>理由</th></tr></thead>
+      <tbody id="pmforecasts"></tbody></table>
   </section>
   <section>
     <h2>成交记录（仅保存在本地 SQLite）</h2>

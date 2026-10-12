@@ -14,6 +14,8 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from .polymarket import PolymarketConfig
+
 log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -86,6 +88,7 @@ class Settings:
     risk: RiskConfig
     llm: LLMConfig
     panel: PanelConfig
+    polymarket: PolymarketConfig
     secrets: Secrets
     data_dir: Path
 
@@ -142,6 +145,7 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None)
         risk=RiskConfig(**raw.get("risk", {})),
         llm=LLMConfig(**raw.get("llm", {})),
         panel=PanelConfig(**raw.get("panel", {})),
+        polymarket=PolymarketConfig(**raw.get("polymarket", {})),
         secrets=_load_secrets(env_path),
         data_dir=data_dir,
     )

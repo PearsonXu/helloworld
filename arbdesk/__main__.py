@@ -1,4 +1,4 @@
-"""CLI: python -m arbdesk [panel|scan|proposals|approve ID|reject ID]"""
+"""CLI: python -m arbdesk [panel|scan|polymarket|proposals|approve ID|reject ID]"""
 from __future__ import annotations
 
 import argparse
@@ -21,6 +21,8 @@ def main() -> None:
     p.add_argument("--no-scheduler", action="store_true")
     s = sub.add_parser("scan", help="run one scan (and AI analysis) now")
     s.add_argument("--no-llm", action="store_true")
+    pmp = sub.add_parser("polymarket", help="run only the Polymarket scan / forecasts / settlement")
+    pmp.add_argument("--no-llm", action="store_true")
     sub.add_parser("proposals", help="list proposals")
     for name in ("approve", "reject"):
         sub.add_parser(name).add_argument("id", type=int)
@@ -50,6 +52,8 @@ def main() -> None:
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
     elif args.cmd == "scan":
         print(json.dumps(desk.run_cycle(use_llm=not args.no_llm), ensure_ascii=False, indent=2))
+    elif args.cmd == "polymarket":
+        print(json.dumps(desk.polymarket_cycle(use_llm=not args.no_llm), ensure_ascii=False, indent=2))
     elif args.cmd == "proposals":
         for prop in store.proposals():
             print(prop["id"], prop["status"], prop["payload"].get("title"), prop["note"] or "")

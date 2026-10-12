@@ -96,7 +96,13 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
 
     @app.get("/api/scans", dependencies=[Depends(auth)])
     def scans(limit: int = 10):
-        return store.scans(min(limit, 50))
+        return store.scans(min(limit, 50), source="crypto")
+
+    @app.get("/api/polymarket", dependencies=[Depends(auth)])
+    def polymarket():
+        latest = store.scans(1, source="polymarket")
+        return {"enabled": settings.polymarket.enabled, "scan": latest[0] if latest else None,
+                "forecasts": store.forecasts(50), "scores": store.forecast_scores()}
 
     @app.get("/api/analyses", dependencies=[Depends(auth)])
     def analyses(limit: int = 10):

@@ -12,6 +12,7 @@ import ccxt
 
 from . import risk
 from .config import Settings
+from .polymarket import PolymarketClient, book_side, taker_fee_per_share
 from .storage import Store
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ class Executor:
         self.settings = settings
         self.store = store
         self._clients: dict[tuple[str, str, bool], ccxt.Exchange] = {}
+        self.pm = PolymarketClient()
 
     def client(self, ex_id: str, market: str, authed: bool) -> ccxt.Exchange:
         key = (ex_id, market, authed)
@@ -54,6 +56,9 @@ class Executor:
             self.store.set_proposal_status(proposal_id, "rejected", "; ".join(errors))
             return {"ok": False, "errors": errors}
 
+        if legs[0]["exchange"] == "polymarket":
+            return self._execute_polymarket(proposal_id, legs)
+
         mode = self.settings.risk.mode
         fills, failures = [], []
         for leg in legs:
@@ -73,6 +78,47 @@ class Executor:
         note = "; ".join(failures) or (f"realized pnl {pnl:.4f} USD" if pnl is not None else "position opened")
         self.store.set_proposal_status(proposal_id, status, note)
         return {"ok": not failures, "fills": fills, "errors": failures, "pnl_usd": pnl}
+
+    def _execute_polymarket(self, proposal_id: int, legs: list[dict]) -> dict:
+        """Paper only. All legs are priced against live books first; nothing is
+        recorded unless every leg can fill within its limit price."""
+        fills, failures = [], []
+        for leg in legs:
+            try:
+                fills.append(self._pm_paper_fill(leg))
+            except Exception as e:
+                failures.append(f"{leg['label'] or leg['token_id']}: {type(e).__name__}: {e}")
+        if failures:
+            self.store.set_proposal_status(proposal_id, "failed", "; ".join(failures))
+            return {"ok": False, "errors": failures}
+        for f in fills:
+            self.store.add_trade(proposal_id=proposal_id, mode="paper", pnl_usd=None, **f)
+        cost = sum(f["cost_usd"] + f["fee_usd"] for f in fills)
+        self.store.set_proposal_status(proposal_id, "executed",
+                                       f"paper position opened, cost ${cost:.2f}; settles at resolution")
+        return {"ok": True, "fills": fills, "errors": [], "pnl_usd": None}
+
+    def _pm_paper_fill(self, leg: dict) -> dict:
+        asks = book_side(self.pm.book(leg["token_id"]), "asks")
+        need, cost = leg["shares"], 0.0
+        for price, size in asks:
+            q = min(need, size)
+            cost += q * price
+            need -= q
+            if need <= 1e-9:
+                break
+        if need > 1e-9:
+            raise ValueError("not enough depth in order book")
+        avg = cost / leg["shares"]
+        # Allow one tick (0.01) of drift from the proposal's price.
+        if avg > leg["limit_price"] + 0.01:
+            raise ValueError(f"price moved: avg {avg:.4f} > limit {leg['limit_price']:.4f}")
+        fee = leg["shares"] * taker_fee_per_share(avg, self.settings.polymarket.taker_fee_rate)
+        return {"exchange": "polymarket", "symbol": f"{leg['label'][:80]} [{leg['outcome']}]",
+                "side": "buy", "amount": leg["shares"], "price": avg, "cost_usd": cost, "fee_usd": fee,
+                "order_id": None,
+                "raw": json.dumps({"market_id": leg["market_id"], "token_id": leg["token_id"],
+                                   "outcome": leg["outcome"]})}
 
     def _paper_fill(self, leg: dict) -> dict:
         q = self.quote(leg)

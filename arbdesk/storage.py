@@ -12,6 +12,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS scans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'crypto',  -- crypto / polymarket
     summary TEXT NOT NULL,          -- JSON: counts, errors
     opportunities TEXT NOT NULL     -- JSON list
 );
@@ -47,6 +48,19 @@ CREATE TABLE IF NOT EXISTS trades (
     order_id TEXT,
     raw TEXT
 );
+CREATE TABLE IF NOT EXISTS pm_forecasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    market_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    end_date TEXT,
+    market_prob REAL NOT NULL,      -- YES ask at forecast time
+    ai_prob REAL NOT NULL,
+    confidence REAL,
+    rationale TEXT,
+    outcome INTEGER,                -- 1 YES / 0 NO once resolved
+    resolved_ts TEXT
+);
 """
 
 
@@ -62,6 +76,9 @@ class Store:
         self.lock = threading.Lock()
         with self.lock:
             self.conn.executescript(SCHEMA)
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(scans)")}
+            if "source" not in cols:  # databases created before the Polymarket module
+                self.conn.execute("ALTER TABLE scans ADD COLUMN source TEXT NOT NULL DEFAULT 'crypto'")
         if new and os.name == "posix":
             os.chmod(path, 0o600)
 
@@ -74,14 +91,18 @@ class Store:
             return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
 
     # scans -------------------------------------------------------------
-    def add_scan(self, summary: dict, opportunities: list[dict]) -> int:
+    def add_scan(self, summary: dict, opportunities: list[dict], source: str = "crypto") -> int:
         return self._insert(
-            "INSERT INTO scans (ts, summary, opportunities) VALUES (?, ?, ?)",
-            (now_iso(), json.dumps(summary), json.dumps(opportunities)),
+            "INSERT INTO scans (ts, source, summary, opportunities) VALUES (?, ?, ?, ?)",
+            (now_iso(), source, json.dumps(summary, ensure_ascii=False),
+             json.dumps(opportunities, ensure_ascii=False)),
         )
 
-    def scans(self, limit: int = 20) -> list[dict]:
-        rows = self._rows("SELECT * FROM scans ORDER BY id DESC LIMIT ?", (limit,))
+    def scans(self, limit: int = 20, source: str | None = None) -> list[dict]:
+        if source:
+            rows = self._rows("SELECT * FROM scans WHERE source = ? ORDER BY id DESC LIMIT ?", (source, limit))
+        else:
+            rows = self._rows("SELECT * FROM scans ORDER BY id DESC LIMIT ?", (limit,))
         for r in rows:
             r["summary"] = json.loads(r["summary"])
             r["opportunities"] = json.loads(r["opportunities"])
@@ -140,6 +161,42 @@ class Store:
 
     def trades(self, limit: int = 100) -> list[dict]:
         return self._rows("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
+
+    def open_pm_trades(self) -> list[dict]:
+        return self._rows("SELECT * FROM trades WHERE exchange = 'polymarket' AND pnl_usd IS NULL")
+
+    def settle_trade(self, tid: int, pnl: float) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE trades SET pnl_usd = ? WHERE id = ?", (pnl, tid))
+
+    # polymarket forecasts ----------------------------------------------
+    def add_forecast(self, **f) -> int:
+        cols = ["market_id", "question", "end_date", "market_prob", "ai_prob", "confidence", "rationale"]
+        return self._insert(
+            f"INSERT INTO pm_forecasts (ts, {', '.join(cols)}) VALUES (?, {', '.join('?' * len(cols))})",
+            (now_iso(), *[f.get(c) for c in cols]),
+        )
+
+    def forecasts(self, limit: int = 100) -> list[dict]:
+        return self._rows("SELECT * FROM pm_forecasts ORDER BY id DESC LIMIT ?", (limit,))
+
+    def unresolved_forecast_markets(self) -> list[str]:
+        return [r["market_id"] for r in
+                self._rows("SELECT DISTINCT market_id FROM pm_forecasts WHERE outcome IS NULL")]
+
+    def resolve_forecasts(self, market_id: str, outcome: int) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE pm_forecasts SET outcome = ?, resolved_ts = ? "
+                              "WHERE market_id = ? AND outcome IS NULL", (outcome, now_iso(), market_id))
+
+    def forecast_scores(self) -> dict:
+        rows = self._rows("SELECT ai_prob, market_prob, outcome FROM pm_forecasts WHERE outcome IS NOT NULL")
+        n = len(rows)
+        if not n:
+            return {"resolved": 0, "ai_brier": None, "market_brier": None}
+        ai = sum((r["ai_prob"] - r["outcome"]) ** 2 for r in rows) / n
+        mk = sum((r["market_prob"] - r["outcome"]) ** 2 for r in rows) / n
+        return {"resolved": n, "ai_brier": round(ai, 4), "market_brier": round(mk, 4)}
 
     def today_stats(self) -> dict:
         today = now_iso()[:10] + "%"

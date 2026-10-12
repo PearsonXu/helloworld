@@ -53,7 +53,7 @@ async function refresh() {
     `日亏损上限 $${s.risk.daily_loss_limit_usd} · 滑点 ≤ ${s.risk.max_slippage_pct}% · 实盘永续 ${s.risk.allow_live_swap ? "允许" : "禁止"}`;
 
   const [scans, analyses, proposals, trades] = await Promise.all([
-    api("/api/scans?limit=1"), api("/api/analyses?limit=1"), api("/api/proposals"), api("/api/trades"),
+    api("/api/scans?limit=1"), api("/api/analyses?limit=5"), api("/api/proposals"), api("/api/trades"),
   ]);
 
   const scan = scans[0];
@@ -66,7 +66,7 @@ async function refresh() {
       || `<tr><td colspan="5" class="muted">本次没有超过阈值的机会（这很正常）</td></tr>`;
   }
 
-  const a = analyses[0];
+  const a = analyses.find((x) => x.content.kind !== "pm_forecast");
   if (a) {
     const c = a.content;
     $("analysis").innerHTML = `<p class="muted">${esc(a.ts)} · ${esc(a.provider)}/${esc(a.model)}</p>
@@ -76,8 +76,9 @@ async function refresh() {
   }
 
   $("proposals").innerHTML = proposals.map((p) => {
-    const legs = (p.payload.legs || []).map((l) =>
-      `${esc(l.exchange)} ${esc(l.market || "spot")} ${esc(l.side)} ${esc(l.symbol)} $${esc(l.usd)}`).join("<br>");
+    const legs = (p.payload.legs || []).map((l) => l.exchange === "polymarket"
+      ? `Polymarket 买 ${esc(l.outcome)} · ${esc(l.label)} · ${esc(l.shares)} 份 @ ≤${esc(l.limit_price)}`
+      : `${esc(l.exchange)} ${esc(l.market || "spot")} ${esc(l.side)} ${esc(l.symbol)} $${esc(l.usd)}`).join("<br>");
     const actions = p.status === "pending"
       ? `<button data-act="approve" data-id="${p.id}">批准执行</button> <button class="danger" data-act="reject" data-id="${p.id}">拒绝</button>`
       : `<span class="muted">${esc(p.status)}</span>`;
@@ -88,9 +89,38 @@ async function refresh() {
       ${p.note ? `<div class="warn">${esc(p.note)}</div>` : ""}</div>`;
   }).join("") || `<p class="muted">暂无</p>`;
 
+  await renderPolymarket();
+
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
     <td>${num(t.cost_usd)}</td><td>${num(t.fee_usd, 4)}</td><td>${num(t.pnl_usd, 4)}</td></tr>`).join("");
+}
+
+async function renderPolymarket() {
+  const pm = await api("/api/polymarket");
+  $("pmSection").style.display = pm.enabled ? "" : "none";
+  if (!pm.enabled) return;
+  const sc = pm.scores;
+  const better = sc.ai_brier != null && sc.ai_brier < sc.market_brier;
+  $("pmstats").innerHTML = `
+    <div class="stat"><b>${sc.resolved}</b><span>已结算的 AI 预测</span></div>
+    <div class="stat"><b class="${sc.ai_brier == null ? "" : better ? "good" : "bad"}">${num(sc.ai_brier, 4)}</b><span>AI Brier（越低越准）</span></div>
+    <div class="stat"><b>${num(sc.market_brier, 4)}</b><span>市场价 Brier</span></div>`;
+  const s = pm.scan;
+  if (s) {
+    const errs = Object.keys(s.summary.errors || {});
+    $("pmmeta").textContent = `${s.ts} · 事件 ${s.summary.events ?? "—"} · negRisk ${s.summary.negrisk_events ?? "—"}` +
+      ` · 初筛 ${s.summary.screened ?? "—"}` + (errs.length ? ` · 失败: ${errs.join(", ")}` : "");
+    $("pmopps").innerHTML = s.opportunities.map((o) => `<tr>
+      <td><a href="https://polymarket.com/event/${encodeURIComponent(o.slug)}" target="_blank" rel="noopener noreferrer">${esc(o.title)}</a></td>
+      <td>买全部 ${o.direction === "buy_yes" ? "YES" : "NO"}（${esc(o.outcomes)} 个）</td><td>${num(o.shares)}</td>
+      <td>${num(o.cost_usd)}</td><td>${num(o.payout_usd)}</td><td class="good">$${num(o.profit_usd, 3)} (${esc(o.net_pct)}%)</td></tr>`).join("")
+      || `<tr><td colspan="6" class="muted">本次没有扣费后仍有利润的组合（大部分时候都是这样）</td></tr>`;
+  }
+  $("pmforecasts").innerHTML = pm.forecasts.map((f) => `<tr><td>${esc(f.ts.slice(0, 16))}</td>
+    <td>${esc(f.question)}</td><td>${num(f.market_prob)}</td><td>${num(f.ai_prob)}</td><td>${num(f.confidence)}</td>
+    <td>${f.outcome == null ? '<span class="muted">未结算</span>' : f.outcome ? "YES" : "NO"}</td>
+    <td class="muted">${esc(f.rationale)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">暂无</td></tr>`;
 }
 
 document.addEventListener("click", async (e) => {

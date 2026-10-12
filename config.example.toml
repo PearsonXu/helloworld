@@ -28,3 +28,14 @@ temperature = 0.2
 [panel]
 host = "127.0.0.1"             # loopback only; enforced
 port = 8765
+
+[polymarket]                   # paper trading only; public data, no wallet
+enabled = true
+max_events = 200               # top events by 24h volume
+min_liquidity_usd = 5000       # for AI forecast candidates
+taker_fee_rate = 0.07          # fee/share = rate * p * (1-p); conservative, check official docs
+min_arb_profit_pct = 0.5       # negRisk bundle must clear this after fees
+max_usd_per_market = 20
+ai_markets_per_run = 8
+ai_min_edge = 0.08             # AI prob must beat price + fee by this much to propose
+ai_horizon_days = [1, 60]
