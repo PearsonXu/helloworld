@@ -151,3 +151,19 @@ def test_one_click_switch_and_prompts_with_claude(claude):
     body = fake.requests[0]["body"]
     assert body["model"] == "claude-opus-5-5" and body["output_config"]["format"]["type"] == "json_schema"
     assert "巷口灯光忽明忽灭" in body["messages"][0]["content"]
+
+
+def test_haiku_cheapest_request_is_compatible(claude):
+    """选最便宜的 Haiku 5.5：不带拒答兜底（Haiku 不支持），不转发 temperature（非默认值会 400），思考保持自适应。"""
+    fake = claude([([{"type": "text", "text": "收到"}], "end_turn")])
+    settings.update({"providers": [{"id": "claude", "model": "claude-haiku-5-5"}]})
+    use("claude")
+    tok = settings.load().gateway.token
+    with TestClient(create_app()) as c:
+        r = c.post("/gateway/openai/v1/responses", json={"model": "gpt-5", "input": "hi", "temperature": 0.2, "top_p": 0.5, "stream": True},
+                   headers={"Authorization": f"Bearer {tok}"})
+        assert "收到" in r.text
+    body, headers = fake.requests[0]["body"], fake.requests[0]["headers"]
+    assert body["model"] == "claude-haiku-5-5" and body["thinking"] == {"type": "adaptive"}
+    assert "fallbacks" not in body and "server-side-fallback" not in headers.get("anthropic-beta", "")
+    assert not {"temperature", "top_p", "top_k"} & set(body)

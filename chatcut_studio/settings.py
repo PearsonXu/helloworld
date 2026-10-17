@@ -67,8 +67,8 @@ class Provider(BaseModel):
 PRESETS: list[Provider] = [
     Provider(id="claude", label="Claude（Anthropic API）", kind="anthropic", model="claude-opus-5-5",
              key_env="ANTHROPIC_API_KEY",
-             hint="platform.claude.com 申请 API Key。型号：claude-opus-5-5（默认，效果最好）、claude-sonnet-5-5（更快，价格约一半）、"
-                  "claude-haiku-5-5（最便宜）；国内网络连不上官方地址时，base_url 填中转地址"),
+             hint="platform.claude.com 申请 API Key。用下面的按钮选型号：Opus 5.5 效果最好；Sonnet 5.5 更快、价格一半；"
+                  "Haiku 5.5 最便宜（约为 Opus 的 1/40，提示词超过 10 万 token 时价格是 $0.50 / $2.50）。国内网络连不上官方地址时，base_url 填中转地址"),
     Provider(id="deepseek", label="DeepSeek", kind="openai", base_url="https://api.deepseek.com",
              key_env="DEEPSEEK_API_KEY", hint="填 OpenAI 兼容地址：官方是 https://api.deepseek.com，用中转服务就填中转地址；Key 在 platform.deepseek.com 申请"),
     Provider(id="qwen", label="通义千问（阿里云百炼）", kind="openai",

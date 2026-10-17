@@ -39,7 +39,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（78 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（79 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
 
 ## 🎵 歌曲工坊（`songlab.py`）
 
@@ -96,7 +96,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 ## DeepSeek / Claude 一键切换
 
-「连接设置」最上面的「用哪个模型」：点 DeepSeek 或 Claude，剪辑 Agent、风格优化、歌曲工坊的配图提示词、ChatCut Desktop 里接入的 Agent 一起切换（也可以在下面分开设置）。Claude 用官方 Anthropic SDK（默认 `claude-opus-5-5`，自适应思考；Opus 5.5 / Sonnet 5.5 默认开启服务端拒答兜底 `fallbacks: "default"`），国内网络连不上官方地址时在 Claude 卡片里填中转 base_url。
+「连接设置」最上面的「用哪个模型」：点 DeepSeek 或 Claude，剪辑 Agent、风格优化、歌曲工坊的配图提示词、ChatCut Desktop 里接入的 Agent 一起切换（也可以在下面分开设置）。Claude 用官方 Anthropic SDK（默认 `claude-opus-5-5`，自适应思考；Opus 5.5 / Sonnet 5.5 默认开启服务端拒答兜底 `fallbacks: "default"`），国内网络连不上官方地址时在 Claude 卡片里填中转 base_url。Claude 卡片上可以一键选型号：Opus 5.5（效果最好，$4 / $20 每百万 token）、Sonnet 5.5（$2 / $10）、Haiku 5.5（最便宜，$0.10 / $0.50；不支持拒答兜底，Studio 选它时自动不开）。
 
 ## 在 ChatCut Desktop 里用 DeepSeek / Claude（`gateway.py`、`responses_api.py`、`claude_chat.py`）
 

@@ -490,6 +490,8 @@ async function loadSettings() {
           placeholder="${p.has_key ? esc((p.key_from_env ? "来自环境变量 " + p.key_env + "：" : "已保存：") + p.key_preview) + "（留空不修改）" : (p.key_env ? "或设置环境变量 " + p.key_env : "")}"></label>
         <label>模型<input data-f="model" list="models-${p.id}" value="${esc(p.model)}" placeholder="点右侧获取模型列表"><datalist id="models-${p.id}"></datalist></label>
       </div>
+      ${p.id === "claude" ? `<div class="row" style="margin-top:6px;flex-wrap:wrap">选型号：${CLAUDE_MODELS.map(([m, t]) =>
+        `<button class="btn small ${p.model === m ? "primary" : ""}" onclick="pickModel('claude', '${m}')">${t}</button>`).join("")}</div>` : ""}
       <div class="row" style="margin-top:8px">
         <button class="btn small primary" onclick="saveProvider('${p.id}')">保存</button>
         <button class="btn small" onclick="fetchModels('${p.id}')">获取模型列表</button>
@@ -652,6 +654,10 @@ async function saveProvider(id, extra = {}) {
   try { await put("/api/settings", {providers: [patch]}); await loadSettings(); provBox(id).querySelector("[data-msg]").textContent = "已保存"; }
   catch (e) { box.querySelector("[data-msg]").textContent = e.message; }
 }
+// Claude 常用型号（价格：每百万 token 输入 / 输出，美元；Haiku 为提示词 10 万 token 以内的价格）
+const CLAUDE_MODELS = [["claude-opus-5-5", "Opus 5.5 · 效果最好 · $4 / $20"], ["claude-sonnet-5-5", "Sonnet 5.5 · 更快 · $2 / $10"],
+                       ["claude-haiku-5-5", "Haiku 5.5 · 最便宜 · $0.10 / $0.50"]];
+function pickModel(id, model) { provBox(id).querySelector("[data-f=model]").value = model; saveProvider(id); }
 const clearKey = (id) => confirm("清除这个服务商的 API Key？") && saveProvider(id, {api_key: "-"});
 async function fetchModels(id) {
   await saveProvider(id);
