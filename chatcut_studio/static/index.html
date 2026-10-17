@@ -110,6 +110,13 @@
 <!-- ① 连接设置 -->
 <section id="conn">
   <div class="card">
+    <h2>用哪个模型</h2>
+    <p class="sub">一键切换：剪辑 Agent、风格优化、歌曲工坊的配图提示词，以及 ChatCut Desktop 里的 Agent（接入后）都改用这里选的模型。Key 和具体型号在下面「模型服务商」里填。</p>
+    <div id="modelSwitch" class="row" style="flex-wrap:wrap;gap:10px"></div>
+    <div id="modelMsg" class="muted" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card">
     <h2>剪辑 Agent 用什么驱动</h2>
     <p class="sub">两种方式二选一，随时可以切换。</p>
     <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px;margin-bottom:8px">
@@ -119,8 +126,8 @@
       <input type="radio" name="agent_mode" value="api" style="margin-top:5px">
       <span><strong>API 模型直连 ChatCut</strong>：不需要 Claude Code，用 DeepSeek、通义千问、Kimi、GLM 或 Claude API 等任意模型，本程序直接连接 ChatCut MCP。</span></label>
     <div class="grid" style="margin-top:12px">
-      <label>API 方式使用的模型服务商<select id="agent_provider"></select></label>
-      <label>风格优化使用的模型服务商<select id="style_provider"></select></label>
+      <label>API 方式使用的模型服务商（分开设置时用）<select id="agent_provider"></select></label>
+      <label>风格优化使用的模型服务商（分开设置时用）<select id="style_provider"></select></label>
     </div>
     <div class="row" style="margin-top:10px"><button class="btn primary" onclick="saveModes()">保存</button><span id="modeMsg" class="muted"></span></div>
   </div>
@@ -132,9 +139,9 @@
   </div>
 
   <div class="card">
-    <h2>在 ChatCut Desktop 里用 DeepSeek</h2>
+    <h2>在 ChatCut Desktop 里用 <span class="gwName">DeepSeek</span></h2>
     <p class="sub">ChatCut Desktop 的 AI 面板里，输入框旁边的 Agent 按钮列出的是本机装好的 Agent：「<strong>ChatGPT</strong>」就是本机的 Codex，「Claude」是 Claude Code。
-      点下面的「接入」，它们就改为通过本程序调用上面配置的 DeepSeek；在 Studio 里换模型、换 Key 立即生效。</p>
+      点下面的「接入」，它们就改为通过本程序调用「用哪个模型」里选的模型（现在是 <span class="gwName">DeepSeek</span>）；在 Studio 里换模型、换 Key 立即生效。</p>
     <div id="gwStatus" class="muted">读取中…</div>
     <div class="tablewrap" style="margin-top:8px"><table>
       <tr><th>Desktop 里的名字</th><th>本机程序</th><th>状态</th><th></th></tr>
@@ -146,8 +153,8 @@
             <button class="btn small" id="gwUnlinkBtn" onclick="gwAgent('claude', false)">断开</button></td></tr>
     </table></div>
     <div class="row" style="margin-top:10px">
-      <button class="btn" onclick="gwTest()">测试 DeepSeek</button>
-      <button class="btn" onclick="gwDiagnose()">诊断：Desktop 里为什么不是 DeepSeek</button>
+      <button class="btn" onclick="gwTest()">测试 <span class="gwName">DeepSeek</span></button>
+      <button class="btn" onclick="gwDiagnose()">诊断：Desktop 里为什么没用上 <span class="gwName">DeepSeek</span></button>
       <span id="gwMsg" class="muted"></span>
     </div>
     <details style="margin-top:8px"><summary class="muted">高级（只影响 Claude Code）</summary>
@@ -157,13 +164,13 @@
           <option value="openai">OpenAI 兼容接口</option>
           <option value="anthropic">Anthropic 兼容接口</option></select>
           <span class="muted" style="font-size:12px">自动：官方 api.deepseek.com 走它的 Anthropic 兼容接口；中转等其他地址按 OpenAI 兼容接口翻译。Codex 一律按 OpenAI 兼容接口翻译。</span></label>
-        <label>快速模型（Claude Code 的后台小任务用，可留空）<input id="gw_small" list="models-deepseek" placeholder="留空 = 和主模型相同"></label>
+        <label>快速模型（Claude Code 的后台小任务用，可留空）<input id="gw_small" list="models-deepseek" placeholder="留空：DeepSeek 用主模型；Claude 用 Claude Code 自己选的 Haiku"></label>
       </div>
     </details>
     <div id="gwDiag"></div>
-    <div class="note">用法：① 在上面「模型服务商」填好 DeepSeek 的 base_url、Key、模型 → ② 点「测试 DeepSeek」→ ③ 点「接入 Codex」→
+    <div class="note">用法：① 在「用哪个模型」里选好模型，在「模型服务商」里填好它的 Key 和型号 → ② 点「测试」→ ③ 点「接入 Codex」→
       ④ 重启 ChatCut Desktop，AI 面板 Agent 按钮选「ChatGPT」，新开一个对话。<br>
-      注意：接入期间本机所有 Codex 会话都会用 DeepSeek，而且 Studio 要保持运行；点「断开」恢复原来的设置。
+      注意：接入期间本机所有 Codex 会话都会用这里选的模型，而且 Studio 要保持运行；点「断开」恢复原来的设置。之后切换模型不用重新接入，下一次对话就生效。
       「Claude Code 方式」里的「一键安装插件」是给已装好的 Claude Code 装 ChatCut 插件，走 Codex 不需要它。</div>
   </div>
 
@@ -289,7 +296,7 @@
         <button class="btn primary" id="runBtn" onclick="startRun()">交给 Agent 执行</button>
         <button class="btn" onclick="copyPrompt()">只复制提示词</button>
       </div>
-      <div class="note">会花积分、上传、删除或导出的操作，都会先在右侧弹出确认。「只复制提示词」可以粘到 ChatCut Desktop 的 AI 输入框里用（接入 Claude Code 后，那边用的也是 DeepSeek）。</div>
+      <div class="note">会花积分、上传、删除或导出的操作，都会先在右侧弹出确认。「只复制提示词」可以粘到 ChatCut Desktop 的 AI 输入框里用（接入后，那边用的也是「用哪个模型」里选的模型）。</div>
     </div>
     <div class="card">
       <h2>本地渲染歌词视频</h2>
@@ -429,7 +436,7 @@ function renderSong() {
      <div class="grid" style="margin-top:6px"><label>画面风格<input id="songStyle" value="清新、电影感的新中式风景插画，自然光，低饱和"></label>
        <label>张数<select id="songCount"><option>3</option><option selected>4</option><option>5</option></select></label></div>
      <div class="row" style="margin-top:8px"><button class="btn" onclick="songSaveLyrics()">保存歌词</button>
-       <button class="btn primary" onclick="songPrompts()">用 DeepSeek 生成配图提示词</button><span id="promptMsg" class="muted"></span></div>
+       <button class="btn primary" onclick="songPrompts()">用 ${esc(providerName(S && S.agent_provider))} 生成配图提示词</button><span id="promptMsg" class="muted"></span></div>
      ${s.prompts ? `<details open style="margin-top:8px"><summary>配图提示词（已保存到 ${esc(D.images)}/配图提示词.md）</summary><pre style="white-space:pre-wrap;font-size:12px">${esc(s.prompts)}</pre></details>` : ""}
      <div class="note">用提示词在你常用的出图工具里出图（9:16 竖版），把图放进 <code>${esc(D.images)}</code>。</div>
      <div class="row"><button class="btn" onclick="songOpen('${D.images}')">打开配图文件夹</button><button class="btn" onclick="openSong(song.name)">刷新</button></div>
@@ -456,7 +463,7 @@ async function songSaveLyrics() {
   await put(`/api/songs/${enc(song.name)}/lyrics`, {text: $("#songLyrics").value}); $("#promptMsg").textContent = "歌词已保存";
 }
 async function songPrompts() {
-  $("#promptMsg").textContent = "DeepSeek 正在读歌词、设计画面…";
+  $("#promptMsg").textContent = `${providerName(S && S.agent_provider)} 正在读歌词、设计画面…`;
   try { await songSaveLyrics(); await post(`/api/songs/${enc(song.name)}/prompts`, {style: $("#songStyle").value, count: +$("#songCount").value});
         await openSong(song.name); $("#promptMsg").textContent = "已生成"; }
   catch (e) { $("#promptMsg").textContent = e.message; }
@@ -477,7 +484,8 @@ async function loadSettings() {
       </div>
       <div class="muted">${esc(p.hint)}</div>
       <div class="grid" style="margin-top:6px">
-        ${p.kind === "openai" ? `<label>base_url<input data-f="base_url" value="${esc(p.base_url)}"></label>` : ""}
+        ${p.kind === "openai" ? `<label>base_url<input data-f="base_url" value="${esc(p.base_url)}"></label>`
+          : `<label>base_url（可选）<input data-f="base_url" value="${esc(p.base_url)}" placeholder="留空 = 官方 api.anthropic.com；用中转时填中转地址"></label>`}
         <label>API Key<input data-f="api_key" type="password" autocomplete="off"
           placeholder="${p.has_key ? esc((p.key_from_env ? "来自环境变量 " + p.key_env + "：" : "已保存：") + p.key_preview) + "（留空不修改）" : (p.key_env ? "或设置环境变量 " + p.key_env : "")}"></label>
         <label>模型<input data-f="model" list="models-${p.id}" value="${esc(p.model)}" placeholder="点右侧获取模型列表"><datalist id="models-${p.id}"></datalist></label>
@@ -489,9 +497,11 @@ async function loadSettings() {
         <span class="muted" data-msg></span>
       </div>
     </div>`;
-  const main = S.providers.filter((p) => p.id === "deepseek"), rest = S.providers.filter((p) => p.id !== "deepseek");
+  const MAIN = ["deepseek", "claude"];
+  const main = MAIN.map((id) => S.providers.find((p) => p.id === id)).filter(Boolean), rest = S.providers.filter((p) => !MAIN.includes(p.id));
   $("#providers").innerHTML = main.map(provCard).join("") +
     `<details style="margin-top:10px"><summary class="muted">其他模型服务商（暂不需要）</summary>${rest.map(provCard).join("")}</details>`;
+  renderModelSwitch();
   loadGateway();
   $("#mcp_url").value = S.mcp.url; $("#mcp_auth").value = S.mcp.auth;
   document.querySelectorAll("input[name=mcp_target]").forEach((r) => { r.checked = r.value === S.mcp.target; r.onchange = toggleTarget; });
@@ -500,15 +510,41 @@ async function loadSettings() {
   toggleToken();
   const st = await api("/api/mcp/status"); $("#redirectUri").textContent = st.redirect_uri;
 }
-// ---- 本机模型网关：ChatCut Desktop 里的 Claude Code 用 DeepSeek ----
+// ---- 用哪个模型：DeepSeek / Claude 一键切换 ----
+const providerName = (id) => { const p = S && S.providers && S.providers.find((x) => x.id === id); return p ? p.label.split("（")[0] : (id || "模型"); };
+function renderModelSwitch() {
+  const uses = {agent: S.agent_provider, style: S.style_provider, desktop: (S.gateway || {}).provider};
+  const same = uses.agent === uses.style && uses.style === uses.desktop;
+  $("#modelSwitch").innerHTML = ["deepseek", "claude"].map((id) => {
+    const p = S.providers.find((x) => x.id === id); if (!p) return "";
+    const on = same && uses.agent === id, ok = p.has_key && p.model;
+    return `<button class="btn ${on ? "primary" : ""}" style="min-width:240px;text-align:left;padding:10px 14px" onclick="useProvider('${id}')">
+      <div style="font-weight:600">${on ? "● " : "○ "}${esc(p.label.split("（")[0])}</div>
+      <div style="font-size:12px;opacity:.85">${ok ? esc(p.model) : (p.has_key ? "还没选型号" : "还没填 Key")}</div></button>`;
+  }).join("");
+  $("#modelMsg").textContent = same ? "" : `现在是分开设置的：剪辑 Agent 用 ${providerName(uses.agent)}，风格优化用 ${providerName(uses.style)}，Desktop 用 ${providerName(uses.desktop)}。点上面任意一个统一切换。`;
+}
+async function useProvider(id) {
+  try {
+    S = await put("/api/settings", {agent_provider: id, style_provider: id, gateway: {provider: id}});
+    await loadSettings();
+    const p = S.providers.find((x) => x.id === id);
+    $("#modelMsg").textContent = `已切换到 ${providerName(id)}` + (p.has_key && p.model ? "。" : `，但还没${p.has_key ? "选型号" : "填 Key"}，请在下面「模型服务商」里补上。`);
+  } catch (e) { $("#modelMsg").textContent = e.message; }
+}
+
+// ---- 本机模型网关：ChatCut Desktop 里的 Agent 用 Studio 选的模型 ----
 async function loadGateway() {
   const g = await api("/api/gateway");
   $("#gw_small").value = g.small_model || ""; $("#gw_mode").value = g.mode || "auto";
+  $("#gw_small").setAttribute("list", "models-" + g.provider);
+  const nm = (g.provider_label || "").split("（")[0] || "模型";
+  document.querySelectorAll(".gwName").forEach((x) => x.textContent = nm);
   $("#gwStatus").innerHTML = (g.problem ? `<span style="color:var(--warn)">${esc(g.problem)}</span>`
       : `使用模型 <span class="mono">${esc(g.model)}</span>`) +
     `　<span class="muted">网关 <span class="mono">${esc(g.url)}</span></span>`;
   const st = (installed, linked, file) => !installed && !linked ? '<span class="pill warn">本机没装</span>'
-    : (linked ? '<span class="pill ok">已接入 DeepSeek</span>' : '<span class="pill warn">未接入</span>') + `<div class="muted mono" style="font-size:11px">${esc(file)}</div>`;
+    : (linked ? '<span class="pill ok">已接入</span>' : '<span class="pill warn">未接入</span>') + `<div class="muted mono" style="font-size:11px">${esc(file)}</div>`;
   $("#gwCodexSt").innerHTML = st(g.codex_installed, g.codex_linked, g.codex_config);
   $("#gwClaudeSt").innerHTML = st(g.claude_installed, g.linked, g.claude_settings);
   $("#gwCodexLink").textContent = g.codex_linked ? "重新接入" : "接入 Codex";
@@ -516,11 +552,11 @@ async function loadGateway() {
   $("#gwCodexUnlink").style.display = g.codex_linked ? "" : "none";
   $("#gwUnlinkBtn").style.display = g.linked ? "" : "none";
 }
-async function gwSave() { await put("/api/settings", {gateway: {provider: "deepseek", small_model: $("#gw_small").value, mode: $("#gw_mode").value}}); }
+async function gwSave() { S = await put("/api/settings", {gateway: {small_model: $("#gw_small").value, mode: $("#gw_mode").value}}); }
 async function gwTest() {
-  $("#gwMsg").textContent = "正在通过网关调用 DeepSeek…";
+  $("#gwMsg").textContent = `正在通过网关调用 ${providerName((S.gateway || {}).provider)}…`;
   try { await gwSave(); const r = await post("/api/gateway/test");
-        $("#gwMsg").textContent = r.ok ? `✓ DeepSeek 回复：${r.message}` : `✗ ${r.message}`; }
+        $("#gwMsg").textContent = r.ok ? `✓ ${providerName((S.gateway || {}).provider)} 回复：${r.message}` : `✗ ${r.message}`; }
   catch (e) { $("#gwMsg").textContent = e.message; }
   loadGateway();
 }

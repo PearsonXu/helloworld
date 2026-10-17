@@ -39,7 +39,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（75 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（78 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
 
 ## 🎵 歌曲工坊（`songlab.py`）
 
@@ -94,7 +94,11 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 需要带 libass 的 ffmpeg（`ffmpeg -filters | grep ass`）。字体从 `chatcut_studio/fonts/` 或 `~/.cache/lyric-mv/fonts/` 读取，找不到时由系统字体回退。
 
-## 在 ChatCut Desktop 里用 DeepSeek（`gateway.py`、`responses_api.py`）
+## DeepSeek / Claude 一键切换
+
+「连接设置」最上面的「用哪个模型」：点 DeepSeek 或 Claude，剪辑 Agent、风格优化、歌曲工坊的配图提示词、ChatCut Desktop 里接入的 Agent 一起切换（也可以在下面分开设置）。Claude 用官方 Anthropic SDK（默认 `claude-opus-5-5`，自适应思考；Opus 5.5 / Sonnet 5.5 默认开启服务端拒答兜底 `fallbacks: "default"`），国内网络连不上官方地址时在 Claude 卡片里填中转 base_url。
+
+## 在 ChatCut Desktop 里用 DeepSeek / Claude（`gateway.py`、`responses_api.py`、`claude_chat.py`）
 
 ChatCut Desktop 的 AI 面板里，输入框旁边的 Agent 按钮列出的是本机装好的 Agent：「**ChatGPT**」是本机的 **Codex**，「Claude」是 Claude Code。Studio 内置一个**本机模型网关**，「连接设置 → 在 ChatCut Desktop 里用 DeepSeek」里点「接入 Codex」（或「接入 Claude Code」），它们就改为通过 Studio 调用 DeepSeek：
 
@@ -106,6 +110,7 @@ ChatCut Desktop「Claude」 → Claude Code ─ Anthropic 接口 ─┴→ Studi
 | | 说明 |
 |---|---|
 | Codex | 网关提供 `/gateway/openai/v1/responses`（Codex 现在只用 Responses 接口），翻译成 `/chat/completions`：消息、函数调用、自由文本工具（apply_patch）、local_shell、图片；DeepSeek 的 `reasoning_content` 放进 reasoning 项的 `encrypted_content`，下一轮还原；流式按 Responses 事件格式发回。接入只改 `~/.codex/config.toml` 的 `model_provider` / `model` 两行并加 `[model_providers.chatcut_studio]` 表（写的是本机 Token，不是 DeepSeek Key），原行先备份，断开后原样恢复 |
+| 服务商是 Claude 时 | Claude Code 的请求原样转发给 Claude（换成真正的 Key，Haiku 小任务照用 Haiku）；Codex 的请求翻译成 Messages API，用官方 SDK 流式调用，上一轮 assistant 的原始内容块（思考块带签名）放在 reasoning 项的 `encrypted_content` 里往返，原样带回，满足 Opus 5.5 的思考块校验。已用真实 Codex + 模拟 Claude API 验证一轮工具调用 |
 | Claude Code | 网关提供 `/gateway/v1/messages`：官方 `api.deepseek.com` 走 DeepSeek 的 Anthropic 兼容接口原样转发，其他 OpenAI 兼容地址翻译；接入只改 `~/.claude/settings.json` 的 `env`，先备份、断开恢复 |
 | 换模型 / 换 Key | 在 Studio 里改，下一次请求立即生效 |
 | 安全 | 网关只监听本机，要带 Studio 生成的 Token 才能用 |
@@ -172,6 +177,7 @@ chatcut_studio/
   songlab.py       歌曲工坊：原曲 → 人声分离 → 降调 → 配图提示词 → 素材文件夹
   gateway.py       本机模型网关：Codex / Claude Code（ChatCut Desktop 里的 Agent）通过它用 DeepSeek
   responses_api.py Responses 接口 ↔ Chat Completions 翻译（给 Codex）
+  claude_chat.py   Chat Completions ↔ Claude Messages API（官方 SDK，给 Codex 用 Claude）
   diagnose.py      诊断 Desktop 里为什么没用上 DeepSeek（环境变量、设置优先级、Desktop 配置、实测）
   agent.py         三种执行器（Claude Code / API / 演示）、权限策略、运行与确认
   presets.py       5 个内置风格

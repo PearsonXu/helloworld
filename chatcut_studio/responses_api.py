@@ -12,11 +12,13 @@ wire_api = "responses"），而 DeepSeek 等服务商普遍提供的是 OpenAI �
 """
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
 
-REASONING_PREFIX = "ccs1:"
+REASONING_PREFIX = "ccs1:"          # DeepSeek 等：reasoning_content 文本
+CLAUDE_PREFIX = "ccsA:"             # Claude：上一轮 assistant 的原始内容块（base64 JSON），原样带回
 
 
 def _id(prefix: str) -> str:
@@ -74,7 +76,7 @@ def to_chat(body: dict, model: str) -> tuple[dict, Translation]:
     if isinstance(items, str):
         items = [{"type": "message", "role": "user", "content": items}]
 
-    pending = {"text": "", "calls": [], "reasoning": ""}
+    pending = {"text": "", "calls": [], "reasoning": "", "claude": None}
 
     def flush():
         if pending["text"] or pending["calls"]:
@@ -83,8 +85,10 @@ def to_chat(body: dict, model: str) -> tuple[dict, Translation]:
                 m["tool_calls"] = pending["calls"]
             if pending["reasoning"]:
                 m["reasoning_content"] = pending["reasoning"]
+            if pending["claude"]:
+                m["_anthropic_content"] = pending["claude"]
             msgs.append(m)
-        pending.update(text="", calls=[], reasoning="")
+        pending.update(text="", calls=[], reasoning="", claude=None)
 
     for it in items:
         t = it.get("type") or "message"
@@ -98,7 +102,13 @@ def to_chat(body: dict, model: str) -> tuple[dict, Translation]:
                          "content": _text(it.get("content")) if role in ("developer", "system") else _parts(it.get("content"))})
         elif t == "reasoning":
             enc = it.get("encrypted_content") or ""
-            pending["reasoning"] += enc[len(REASONING_PREFIX):] if enc.startswith(REASONING_PREFIX) else ""
+            if enc.startswith(CLAUDE_PREFIX):
+                try:
+                    pending["claude"] = json.loads(base64.b64decode(enc[len(CLAUDE_PREFIX):]).decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    pass
+            else:
+                pending["reasoning"] += enc[len(REASONING_PREFIX):] if enc.startswith(REASONING_PREFIX) else ""
         elif t == "function_call":
             pending["calls"].append({"id": it["call_id"], "type": "function",
                                      "function": {"name": it["name"], "arguments": it.get("arguments") or "{}"}})
@@ -158,7 +168,12 @@ def from_chat(data: dict, tr: Translation) -> tuple[list[dict], dict]:
     """chat 回复 → Responses 的 output 项列表和 usage。"""
     msg = ((data.get("choices") or [{}])[0].get("message")) or {}
     items: list[dict] = []
-    if rc := msg.get("reasoning_content"):
+    rc = msg.get("reasoning_content") or ""
+    if msg.get("_anthropic_content"):
+        blob = base64.b64encode(json.dumps(msg["_anthropic_content"], ensure_ascii=False).encode("utf-8")).decode()
+        items.append({"type": "reasoning", "id": _id("rs"), "summary": [{"type": "summary_text", "text": rc}] if rc else [],
+                      "encrypted_content": CLAUDE_PREFIX + blob})
+    elif rc:
         items.append({"type": "reasoning", "id": _id("rs"), "summary": [{"type": "summary_text", "text": rc}],
                       "encrypted_content": REASONING_PREFIX + rc})
     if msg.get("content"):
@@ -226,6 +241,8 @@ def item_events(ev: Events, i: int, it: dict) -> list[bytes]:
         out.append(ev("response.output_item.added", output_index=i, item={**it, "input": "", "status": "in_progress"}))
         out.append(ev("response.custom_tool_call_input.delta", item_id=it["id"], output_index=i, delta=it["input"]))
         out.append(ev("response.custom_tool_call_input.done", item_id=it["id"], output_index=i, input=it["input"]))
+    elif t == "reasoning" and not it["summary"]:
+        out.append(ev("response.output_item.added", output_index=i, item=it))
     elif t == "reasoning":
         out.append(ev("response.output_item.added", output_index=i, item={**it, "summary": []}))
         text = it["summary"][0]["text"]

@@ -52,6 +52,8 @@ def pick_model(g: settings.GatewayConfig, p: Provider, requested: str) -> str:
     small = (requested or "").lower()
     if g.small_model and ("haiku" in small or requested == g.small_model):
         return g.small_model
+    if p.kind == "anthropic" and "haiku" in small and requested.startswith("claude-"):
+        return requested                      # 服务商就是 Claude：后台小任务照用 Claude Code 要的 Haiku，更省钱
     return main
 
 
@@ -237,6 +239,14 @@ async def _openai(p: Provider, req: dict) -> tuple[int, dict]:
         return r.status_code, r.json()
     except ValueError:
         return r.status_code, {"error": {"message": r.text[:500]}}
+
+
+async def _upstream(p: Provider, req: dict) -> tuple[int, dict]:
+    """chat 格式请求发给服务商：Claude 走官方 SDK（Messages API），其他走 OpenAI 兼容 /chat/completions。"""
+    if p.kind == "anthropic":
+        from . import claude_chat
+        return await claude_chat.complete(p, req)
+    return await _openai(p, req)
 
 
 def _sse(name: str, data: dict) -> bytes:
@@ -455,8 +465,8 @@ async def _handle_responses(body: dict, headers, rec: dict) -> Response:
         p = s.provider(s.gateway.provider)
     except KeyError as e:
         return _resp_error(400, f"ChatCut Studio 网关：没有服务商 {e}")
-    if not p.key() or not p.base_url:
-        return _resp_error(400, f"ChatCut Studio 网关：{p.label} 的 base_url 或 API Key 还没填")
+    if not p.key() or (p.kind != "anthropic" and not p.base_url):
+        return _resp_error(400, f"ChatCut Studio 网关：{p.label} 的 API Key{'' if p.kind == 'anthropic' else ' 或 base_url'} 还没填")
     model = s.gateway.model or p.model
     if not model:
         return _resp_error(400, f"ChatCut Studio 网关：{p.label} 还没有选择模型")
@@ -466,7 +476,7 @@ async def _handle_responses(body: dict, headers, rec: dict) -> Response:
 
     if not body.get("stream"):
         try:
-            status, data = await _openai(p, req)
+            status, data = await _upstream(p, req)
         except httpx.HTTPError as e:
             return _resp_error(502, f"连不上 {p.label}：{e}")
         if status >= 400:
@@ -478,7 +488,7 @@ async def _handle_responses(body: dict, headers, rec: dict) -> Response:
         ev = ra.Events()
         yield ev("response.created", response=ra.response_obj(rid, model, "in_progress", []))
         yield ev("response.in_progress", response=ra.response_obj(rid, model, "in_progress", []))
-        task = asyncio.ensure_future(_openai(p, req))
+        task = asyncio.ensure_future(_upstream(p, req))
         while not task.done():                      # 上游不是流式：等待期间发 SSE 注释保活
             await asyncio.wait({task}, timeout=10)
             if not task.done():
@@ -565,7 +575,7 @@ def link_codex() -> dict:
     top = [l for l in top if not _TOP_KEY.match(l)]
     while top and not top[0].strip():
         top.pop(0)
-    lines = [f'model_provider = "{CODEX_PROVIDER}"   # ChatCut Studio：Codex 通过本机网关用 DeepSeek',
+    lines = [f'model_provider = "{CODEX_PROVIDER}"   # ChatCut Studio：Codex 通过本机网关用 Studio 里选的模型',
              f'model = "{model}"', *top, *_drop_our_table(rest), "",
              f"[model_providers.{CODEX_PROVIDER}]", f'name = "ChatCut Studio · {p.label}"',
              f'base_url = "{gateway_url()}/openai/v1"', 'wire_api = "responses"',
