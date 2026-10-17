@@ -167,3 +167,33 @@ def test_haiku_cheapest_request_is_compatible(claude):
     assert body["model"] == "claude-haiku-5-5" and body["thinking"] == {"type": "adaptive"}
     assert "fallbacks" not in body and "server-side-fallback" not in headers.get("anthropic-beta", "")
     assert not {"temperature", "top_p", "top_k"} & set(body)
+
+
+def test_claude_ignores_openai_forwarding_mode(claude):
+    """转发方式设成「OpenAI 兼容」（给 DeepSeek 中转用）时，Claude 仍然走它自己的 Messages API。"""
+    fake = claude([([{"type": "text", "text": "连接成功"}], "end_turn")])
+    use("claude")
+    settings.update({"gateway": {"mode": "openai"}})
+    assert gateway.route(settings.load())[1] == "anthropic"
+    r = asyncio.run(gateway.self_test())
+    assert r["ok"] and r["message"] == "连接成功", r
+    assert fake.requests[0]["body"]["model"] == "claude-opus-5-5"
+
+
+def test_empty_upstream_error_is_explained(claude):
+    """对方出错又不给说明（比如 base_url 填错）时，报错里写清状态码和地址，而不是空消息。"""
+    app = FastAPI()
+
+    @app.post("/v1/messages")
+    async def bad():
+        from fastapi.responses import Response
+        return Response(b"", status_code=404)
+
+    url, srv = serve(app)
+    try:
+        settings.update({"providers": [{"id": "claude", "base_url": url, "model": "claude-haiku-5-5", "api_key": "sk-ant-test-1234567890"}]})
+        use("claude")
+        r = asyncio.run(gateway.self_test())
+        assert not r["ok"] and "HTTP 404" in r["message"] and url in r["message"], r
+    finally:
+        srv.should_exit = True

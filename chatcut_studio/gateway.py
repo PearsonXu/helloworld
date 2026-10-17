@@ -61,6 +61,8 @@ def route(s: settings.Settings) -> tuple[Provider, str]:
     """返回（服务商, 转发方式 anthropic / openai）。"""
     g = s.gateway
     p = s.provider(g.provider)
+    if p.kind == "anthropic":           # Claude 永远走它自己的 Messages API；「转发方式」只对 DeepSeek 这类服务商生效
+        return p, "anthropic"
     url = p.anthropic_endpoint()
     if g.mode == "anthropic" or (g.mode == "auto" and url):
         if not url:
@@ -131,6 +133,14 @@ async def passthrough(body: dict, headers, p: Provider, model: str) -> Response:
     if r.status_code >= 400 or not body.get("stream"):
         data = await r.aread()
         await r.aclose(); await client.aclose()
+        if r.status_code >= 400:
+            try:
+                ok = bool((json.loads(data).get("error") or {}).get("message"))
+            except (ValueError, AttributeError):
+                ok = False
+            if not ok:                       # 对方没给出可读的错误：补上状态码和地址，方便排查
+                return error(r.status_code, f"{p.label}：HTTP {r.status_code}，{target} 没有返回错误说明"
+                                            f"（{data[:200].decode('utf-8', 'replace') or '空'}）。检查 base_url 和 Key")
         return Response(data, status_code=r.status_code, media_type=r.headers.get("content-type", "application/json"))
 
     async def relay():
@@ -233,12 +243,16 @@ def from_openai(data: dict, model: str) -> dict:
 
 
 async def _openai(p: Provider, req: dict) -> tuple[int, dict]:
+    url = p.base_url.rstrip("/") + "/chat/completions"
     async with httpx.AsyncClient(timeout=TIMEOUT) as c:
-        r = await c.post(p.base_url.rstrip("/") + "/chat/completions", headers={"Authorization": f"Bearer {p.key()}"}, json=req)
+        r = await c.post(url, headers={"Authorization": f"Bearer {p.key()}"}, json=req)
     try:
-        return r.status_code, r.json()
+        data = r.json()
     except ValueError:
-        return r.status_code, {"error": {"message": r.text[:500]}}
+        data = {"error": {"message": r.text[:500]}}
+    if r.status_code >= 400 and not (isinstance(data, dict) and (data.get("error") or {}).get("message")):
+        data = {"error": {"message": f"HTTP {r.status_code}，{url} 没有返回错误说明（地址可能不对，或者不是 OpenAI 兼容接口）"}}
+    return r.status_code, data
 
 
 async def _upstream(p: Provider, req: dict) -> tuple[int, dict]:
@@ -432,10 +446,14 @@ async def self_test() -> dict:
     body = {"model": "claude-sonnet", "max_tokens": 200, "stream": False,
             "messages": [{"role": "user", "content": "请只回复：连接成功"}]}
     r = await handle(body, {"x-api-key": s.gateway.token, "user-agent": "ChatCut Studio 自测"})
-    data = json.loads(r.body) if hasattr(r, "body") else {}
+    raw = getattr(r, "body", b"") or b""
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        data = {"error": {"message": raw[:300].decode("utf-8", "replace")}}
     if r.status_code >= 400 or data.get("type") == "error":
         msg = (data.get("error") or {}).get("message") if isinstance(data, dict) else ""
-        return {"ok": False, "message": msg or f"HTTP {r.status_code}"}
+        return {"ok": False, "message": msg or f"HTTP {r.status_code}（没有错误说明）"}
     return {"ok": True, "message": _text_of(data.get("content")) or "（模型返回为空）", "model": data.get("model", "")}
 
 
