@@ -252,3 +252,27 @@ def test_responses_endpoint_via_fake_deepseek(fake_llm):
     assert events[0]["type"] == "response.created" and events[-1]["type"] == "response.completed"
     assert events[-1]["response"]["output"][0]["content"][0]["text"] == "收到"
     assert llm.requests[0]["body"]["model"] == "deepseek-v4-pro"
+
+
+def test_namespaced_mcp_tools_reach_the_model():
+    """Codex 把 MCP 服务器（比如 ChatCut Desktop）的工具打包成 namespace 发来：展开给模型，调用时按 Codex 的写法拆回。"""
+    from chatcut_studio import responses_api as ra
+    body = {"tools": [{"type": "function", "name": "exec_command", "parameters": {"type": "object"}},
+                      {"type": "namespace", "name": "mcp__chatcut_desktop", "description": "ChatCut",
+                       "tools": [{"type": "function", "name": "get_active_project", "description": "当前项目", "parameters": {"type": "object"}},
+                                 {"type": "function", "name": "edit_captions", "parameters": {"type": "object"}}]},
+                      {"type": "web_search"}],
+            "input": [{"type": "message", "role": "user", "content": "读项目"},
+                      {"type": "function_call", "call_id": "c0", "name": "get_active_project", "namespace": "mcp__chatcut_desktop", "arguments": "{}"},
+                      {"type": "function_call_output", "call_id": "c0", "output": [{"type": "input_text", "text": "无羁"}]}]}
+    chat, tr = ra.to_chat(body, "m")
+    names = [t["function"]["name"] for t in chat["tools"]]
+    assert names == ["exec_command", "mcp__chatcut_desktop__get_active_project", "mcp__chatcut_desktop__edit_captions"]
+    assert tr.skipped == ["web_search"]
+    assert chat["messages"][1]["tool_calls"][0]["function"]["name"] == "mcp__chatcut_desktop__get_active_project"   # 历史调用也展开
+    assert chat["messages"][2] == {"role": "tool", "tool_call_id": "c0", "content": "无羁"}
+    items, _ = ra.from_chat({"choices": [{"message": {"tool_calls": [
+        {"id": "c1", "function": {"name": "mcp__chatcut_desktop__edit_captions", "arguments": "{}"}}]}}]}, tr)
+    assert items[0]["type"] == "function_call" and items[0]["name"] == "edit_captions" and items[0]["namespace"] == "mcp__chatcut_desktop"
+    long = ra.flat_name("mcp__" + "x" * 40, "y" * 40)
+    assert len(long) <= 64 and long == ra.flat_name("mcp__" + "x" * 40, "y" * 40)

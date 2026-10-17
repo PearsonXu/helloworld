@@ -13,7 +13,9 @@ wire_api = "responses"），而 DeepSeek 等服务商普遍提供的是 OpenAI �
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import re
 import time
 import uuid
 
@@ -59,12 +61,23 @@ def _parts(content) -> str | list:
     return parts
 
 
+def flat_name(namespace: str, name: str) -> str:
+    """分组工具（Codex 把 MCP 工具按服务器打包成 namespace）展开后的函数名：mcp__chatcut_desktop__get_project。
+    服务商要求函数名只含字母数字下划线横线、最长 64 个字符。"""
+    flat = re.sub(r"[^A-Za-z0-9_-]", "_", f"{namespace}__{name}")
+    if len(flat) > 64:
+        flat = flat[:55] + "_" + hashlib.sha1(flat.encode()).hexdigest()[:8]
+    return flat
+
+
 class Translation:
-    """一次请求的翻译结果，记住哪些工具是自由文本工具 / local_shell，回复时要翻回去。"""
+    """一次请求的翻译结果，记住哪些工具是自由文本工具 / local_shell / 分组工具，回复时要翻回去。"""
 
     def __init__(self):
         self.custom: set[str] = set()
         self.local_shell = False
+        self.namespaced: dict[str, tuple[str, str]] = {}     # 展开后的函数名 → (分组名, 原工具名)
+        self.skipped: list[str] = []                          # 第三方模型用不了、没有转过去的工具类型（诊断用）
 
 
 def to_chat(body: dict, model: str) -> tuple[dict, Translation]:
@@ -110,8 +123,9 @@ def to_chat(body: dict, model: str) -> tuple[dict, Translation]:
             else:
                 pending["reasoning"] += enc[len(REASONING_PREFIX):] if enc.startswith(REASONING_PREFIX) else ""
         elif t == "function_call":
+            name = flat_name(it["namespace"], it["name"]) if it.get("namespace") else it["name"]
             pending["calls"].append({"id": it["call_id"], "type": "function",
-                                     "function": {"name": it["name"], "arguments": it.get("arguments") or "{}"}})
+                                     "function": {"name": name, "arguments": it.get("arguments") or "{}"}})
         elif t == "custom_tool_call":
             pending["calls"].append({"id": it["call_id"], "type": "function",
                                      "function": {"name": it["name"], "arguments": json.dumps({"input": it.get("input", "")}, ensure_ascii=False)}})
@@ -131,6 +145,16 @@ def to_chat(body: dict, model: str) -> tuple[dict, Translation]:
         if kind == "function":
             tools.append({"type": "function", "function": {"name": tl["name"], "description": (tl.get("description") or "")[:4000],
                                                            "parameters": tl.get("parameters") or {"type": "object", "properties": {}}}})
+        elif kind == "namespace":    # 一组工具（ChatCut Desktop 等 MCP 服务器的工具都这样发来）：逐个展开成函数
+            ns = tl.get("name") or ""
+            for sub in tl.get("tools") or []:
+                if sub.get("type", "function") != "function" or not sub.get("name"):
+                    continue
+                flat = flat_name(ns, sub["name"])
+                tr.namespaced[flat] = (ns, sub["name"])
+                desc = (sub.get("description") or "")[:3900]
+                tools.append({"type": "function", "function": {"name": flat, "description": f"[{ns}] {desc}".strip(),
+                                                               "parameters": sub.get("parameters") or {"type": "object", "properties": {}}}})
         elif kind == "custom":       # 自由文本工具（比如 apply_patch）：包成只有一个字符串参数 input 的函数
             tr.custom.add(tl["name"])
             fmt = tl.get("format") or {}
@@ -145,7 +169,8 @@ def to_chat(body: dict, model: str) -> tuple[dict, Translation]:
                                                                "command": {"type": "array", "items": {"type": "string"}},
                                                                "workdir": {"type": "string"}, "timeout_ms": {"type": "integer"}},
                                                                "required": ["command"]}}})
-        # web_search 等服务端工具：第三方模型没有，跳过
+        else:                        # web_search 等服务端工具：第三方模型没有，跳过（记下来，诊断里能看到）
+            tr.skipped.append(f"{kind}:{tl.get('name') or ''}".rstrip(":"))
 
     out: dict = {"model": model, "messages": msgs,
                  "max_tokens": min(int(body.get("max_output_tokens") or 8192), 8192)}
@@ -196,6 +221,10 @@ def from_chat(data: dict, tr: Translation) -> tuple[list[dict], dict]:
             items.append({"type": "local_shell_call", "id": _id("lsh"), "call_id": call_id, "status": "completed",
                           "action": {"type": "exec", "command": a.get("command") or [], "working_directory": a.get("workdir"),
                                      "timeout_ms": a.get("timeout_ms"), "env": {}}})
+        elif name in tr.namespaced:   # 分组里的工具：按 Codex 的写法拆回「工具名 + namespace」
+            ns, orig = tr.namespaced[name]
+            items.append({"type": "function_call", "id": _id("fc"), "call_id": call_id, "name": orig, "namespace": ns,
+                          "arguments": raw, "status": "completed"})
         else:
             items.append({"type": "function_call", "id": _id("fc"), "call_id": call_id, "name": name, "arguments": raw, "status": "completed"})
     u = data.get("usage") or {}

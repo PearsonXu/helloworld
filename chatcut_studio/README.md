@@ -39,7 +39,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（81 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（82 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
 
 ## 🎵 歌曲工坊（`songlab.py`）
 
@@ -109,7 +109,7 @@ ChatCut Desktop「Claude」 → Claude Code ─ Anthropic 接口 ─┴→ Studi
 
 | | 说明 |
 |---|---|
-| Codex | 网关提供 `/gateway/openai/v1/responses`（Codex 现在只用 Responses 接口），翻译成 `/chat/completions`：消息、函数调用、自由文本工具（apply_patch）、local_shell、图片；DeepSeek 的 `reasoning_content` 放进 reasoning 项的 `encrypted_content`，下一轮还原；流式按 Responses 事件格式发回。接入只改 `~/.codex/config.toml` 的 `model_provider` / `model` 两行并加 `[model_providers.chatcut_studio]` 表（写的是本机 Token，不是 DeepSeek Key），原行先备份，断开后原样恢复 |
+| Codex | 网关提供 `/gateway/openai/v1/responses`（Codex 现在只用 Responses 接口），翻译成 `/chat/completions`：消息、函数调用、MCP 工具组（Codex 把 ChatCut Desktop 等 MCP 服务器的工具打包成 `namespace`，展开成 `mcp__服务器__工具` 给模型，调用时拆回 `name` + `namespace`）、自由文本工具（apply_patch）、local_shell、图片；DeepSeek 的 `reasoning_content` 放进 reasoning 项的 `encrypted_content`，下一轮还原；流式按 Responses 事件格式发回。接入只改 `~/.codex/config.toml` 的 `model_provider` / `model` 两行并加 `[model_providers.chatcut_studio]` 表（写的是本机 Token，不是 DeepSeek Key），原行先备份，断开后原样恢复 |
 | 服务商是 Claude 时 | Claude Code 的请求原样转发给 Claude（换成真正的 Key，Haiku 小任务照用 Haiku）；Codex 的请求翻译成 Messages API，用官方 SDK 流式调用，上一轮 assistant 的原始内容块（思考块带签名）放在 reasoning 项的 `encrypted_content` 里往返，原样带回，满足 Opus 5.5 的思考块校验。已用真实 Codex + 模拟 Claude API 验证一轮工具调用 |
 | Claude Code | 网关提供 `/gateway/v1/messages`：官方 `api.deepseek.com` 走 DeepSeek 的 Anthropic 兼容接口原样转发，其他 OpenAI 兼容地址翻译；接入只改 `~/.claude/settings.json` 的 `env`，先备份、断开恢复 |
 | 换模型 / 换 Key | 在 Studio 里改，下一次请求立即生效 |

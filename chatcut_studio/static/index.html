@@ -579,7 +579,7 @@ async function gwDiagnose() {
     $("#gwDiag").innerHTML = `<div class="note">
       ${d.findings.map((x) => `<div style="margin:4px 0">${pill[x.level]} ${esc(x.text)}</div>`).join("") || "没有发现问题。"}
       <details style="margin-top:8px"><summary>明细</summary>
-        <h3>网关最近收到的请求</h3>${rows(d.recent, (r) => `<tr><td>${esc(r.time)}</td><td class="mono">${esc(r.requested)} → ${esc(r.model || "")}</td><td>${r.status}</td><td class="muted">${esc(r.client)}</td></tr>`)}
+        <h3>网关最近收到的请求</h3>${rows(d.recent, (r) => `<tr><td>${esc(r.time)}</td><td class="mono">${esc(r.requested)} → ${esc(r.model || "")}</td><td>${r.status}</td><td class="muted">${esc(r.client)}${r.tools != null ? `<br>转给模型的工具 ${r.tools} 个${(r.skipped || []).length ? "；没转的：" + esc(r.skipped.join("、")) : ""}` : ""}</td></tr>`)}
         <h3>本机实际调用 Claude Code</h3>${d.claude ? `<div>${d.claude.via_gateway ? "走了网关" : "没走网关"}；模型：<span class="mono">${esc((d.claude.models || []).join(", "))}</span>；回复：${esc(d.claude.message || "")}</div>` : '<div class="muted">（没有测试：还没接入）</div>'}
         <h3>本机实际调用 Codex</h3>${d.codex ? `<div>${d.codex.via_gateway ? "走了网关" : "没走网关"}<pre style="white-space:pre-wrap;font-size:11px">${esc(d.codex.message || "")}</pre></div>` : '<div class="muted">（没有测试：还没接入）</div>'}
         <h3>环境变量</h3>${rows(d.env, (e) => `<tr><td class="muted">${esc(e.source)}</td><td class="mono">${esc(e.key)}</td><td class="mono">${esc(e.value)}</td></tr>`)}

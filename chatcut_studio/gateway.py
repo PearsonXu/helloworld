@@ -490,6 +490,8 @@ async def _handle_responses(body: dict, headers, rec: dict) -> Response:
         return _resp_error(400, f"ChatCut Studio 网关：{p.label} 还没有选择模型")
     rec["model"] = model
     req, tr = ra.to_chat(body, model)
+    rec["tools"] = len(req.get("tools") or [])
+    rec["skipped"] = tr.skipped
     rid = "resp_" + uuid.uuid4().hex[:24]
 
     if not body.get("stream"):
