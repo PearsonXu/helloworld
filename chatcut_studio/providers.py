@@ -22,6 +22,8 @@ T = TypeVar("T", bound=BaseModel)
 # 这些 Claude 模型支持服务端拒答兜底（fallbacks: "default"）
 FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"}
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# 思考块和产生它时的 system / tools / 之前的消息绑定；对不上时（比如 Codex 中途增减了工具）丢掉旧思考块继续，而不是 400
+BINDING_BETA = "thinking-binding-controls-2026-08-01"
 TIMEOUT = httpx.Timeout(300, connect=15)
 
 
@@ -45,11 +47,11 @@ def _anthropic(p: Provider) -> anthropic.AsyncAnthropic:
 
 
 def _claude_extra(p: Provider) -> dict:
-    extra: dict[str, Any] = {"thinking": {"type": "adaptive"}}
+    extra: dict[str, Any] = {"thinking": {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}},
+                             "betas": [BINDING_BETA]}
     if p.model in FALLBACK_MODELS:
-        extra |= {"betas": [FALLBACK_BETA], "fallbacks": "default"}
-    else:
-        extra["betas"] = []
+        extra["betas"].append(FALLBACK_BETA)
+        extra["fallbacks"] = "default"
     return extra
 
 

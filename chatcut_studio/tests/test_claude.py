@@ -101,7 +101,8 @@ def test_codex_to_claude_round_trip_keeps_thinking_blocks(claude):
         assert "文件内容是：暗号" in r2.text
     req1, req2 = fake.requests[0]["body"], fake.requests[1]["body"]
     assert req1["model"] == "claude-opus-5-5" and req1["system"] == "你是助手" and req1["stream"] is True
-    assert req1["thinking"] == {"type": "adaptive"} and req1["output_config"] == {"effort": "high"}
+    assert req1["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}} and req1["output_config"] == {"effort": "high"}
+    assert "thinking-binding-controls-2026-08-01" in fake.requests[0]["headers"]["anthropic-beta"]
     assert req1["fallbacks"] == "default" and "server-side-fallback-2026-07-01" in fake.requests[0]["headers"]["anthropic-beta"]
     assert req1["tool_choice"] == {"type": "auto"} and req1["tools"][0]["input_schema"]["properties"]["cmd"]
     assert fake.requests[0]["headers"]["x-api-key"] == "sk-ant-test-1234567890"
@@ -164,7 +165,7 @@ def test_haiku_cheapest_request_is_compatible(claude):
                    headers={"Authorization": f"Bearer {tok}"})
         assert "收到" in r.text
     body, headers = fake.requests[0]["body"], fake.requests[0]["headers"]
-    assert body["model"] == "claude-haiku-5-5" and body["thinking"] == {"type": "adaptive"}
+    assert body["model"] == "claude-haiku-5-5" and body["thinking"] == {"type": "adaptive", "block_binding": {"prefix_mismatch_behavior": "drop_block"}}
     assert "fallbacks" not in body and "server-side-fallback" not in headers.get("anthropic-beta", "")
     assert not {"temperature", "top_p", "top_k"} & set(body)
 
@@ -197,3 +198,20 @@ def test_empty_upstream_error_is_explained(claude):
         assert not r["ok"] and "HTTP 404" in r["message"] and url in r["message"], r
     finally:
         srv.should_exit = True
+
+
+def test_mid_conversation_system_notes_stay_in_place():
+    """Codex 中途插入的系统说明不能并进顶层 system（会改动已发过的前缀，让思考块失效），要留在原位置。"""
+    from chatcut_studio import claude_chat
+    req = {"messages": [{"role": "system", "content": "你是助手"}, {"role": "user", "content": "第一句"},
+                        {"role": "assistant", "content": "好", "_anthropic_content": [{"type": "thinking", "thinking": "", "signature": "s1"},
+                                                                                     {"type": "text", "text": "好"}]},
+                        {"role": "system", "content": "环境：当前目录 D:/mv"}, {"role": "user", "content": "第二句"}]}
+    system, msgs, _, _ = claude_chat.to_messages(req)
+    assert system == "你是助手"
+    assert msgs[0] == {"role": "user", "content": [{"type": "text", "text": "第一句"}]}
+    assert msgs[1]["content"][0] == {"type": "thinking", "thinking": "", "signature": "s1"}
+    assert msgs[2] == {"role": "user", "content": [{"type": "text", "text": "[系统说明]\n环境：当前目录 D:/mv"}, {"type": "text", "text": "第二句"}]}
+    # 第一轮的请求（只有前两条）翻译出来的前缀，和第二轮请求的前缀完全一样
+    s1, m1, _, _ = claude_chat.to_messages({"messages": req["messages"][:2]})
+    assert s1 == system and m1 == msgs[:1]

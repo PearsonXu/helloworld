@@ -45,8 +45,16 @@ def _user_blocks(content) -> list[dict]:
 
 def to_messages(req: dict) -> tuple[str, list[dict], list[dict], dict | None]:
     """chat 请求 → (system, messages, tools, tool_choice)。"""
-    system = "\n\n".join(m["content"] if isinstance(m["content"], str) else json.dumps(m["content"], ensure_ascii=False)
-                         for m in req.get("messages", []) if m["role"] == "system")
+    def as_text(c) -> str:
+        return c if isinstance(c, str) else json.dumps(c, ensure_ascii=False)
+
+    # 只有开头的系统说明进顶层 system；对话中途插入的（Codex 会补环境信息等）留在原位置，变成一段 user 文字。
+    # 这样已经发过的内容只增不改：Claude 的思考块和「system + tools + 之前的消息」绑定，改了前面就会失效
+    all_msgs = req.get("messages", [])
+    lead = 0
+    while lead < len(all_msgs) and all_msgs[lead]["role"] == "system":
+        lead += 1
+    system = "\n\n".join(as_text(m["content"]) for m in all_msgs[:lead])
     msgs: list[dict] = []
 
     def add(role: str, blocks: list[dict]):
@@ -57,9 +65,10 @@ def to_messages(req: dict) -> tuple[str, list[dict], list[dict], dict | None]:
         else:
             msgs.append({"role": role, "content": blocks})
 
-    for m in req.get("messages", []):
+    for m in all_msgs[lead:]:
         role = m["role"]
         if role == "system":
+            add("user", [{"type": "text", "text": "[系统说明]\n" + as_text(m["content"])}])
             continue
         if role == "user":
             add("user", _user_blocks(m.get("content")))
