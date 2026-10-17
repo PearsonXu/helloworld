@@ -354,7 +354,7 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.get("/api/styles")
     def list_styles():
         return {"styles": styles.list_styles(), "missing_presets": styles.missing_presets(),
-                "max": MAX_STYLES, "skills_dir": str(styles.CLAUDE_SKILLS_DIR)}
+                "max": MAX_STYLES, "skills_dir": str(styles.CLAUDE_SKILLS_DIR), "codex_skills_dir": str(styles.codex_skills_dir())}
 
     @app.get("/api/styles/{slug}")
     def get_style(slug: str):
@@ -383,7 +383,8 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
 
     @app.post("/api/styles/{slug}/install")
     def install_style(slug: str):
-        return {"path": _style_or_404(styles.install, slug)}
+        paths = _style_or_404(styles.install, slug)
+        return {"path": paths["Claude Code"], "paths": paths}
 
     @app.post("/api/styles/{slug}/optimize")
     async def optimize_style(slug: str, req: OptimizeReq):

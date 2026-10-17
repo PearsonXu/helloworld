@@ -259,7 +259,7 @@
         <button class="btn primary" onclick="saveStyle()">保存修改</button>
         <button class="btn" onclick="duplicateStyle()">复制为新风格</button>
         <button class="btn" id="restoreBtn" onclick="restoreStyle()">恢复预设</button>
-        <button class="btn" onclick="installStyle()">安装到 Claude Code</button>
+        <button class="btn" onclick="installStyle()">安装为 Agent 的 skill（Claude Code + Codex）</button>
         <button class="btn" onclick="deleteStyle()">删除</button>
         <span id="edMsg" class="muted"></span>
       </div>
@@ -776,7 +776,7 @@ function readForm() {
 let cur = null, pending = null;
 async function loadStyles(select) {
   const r = await api("/api/styles");
-  $("#styleCount").textContent = `${r.styles.length} / ${r.max} 个。安装到 Claude Code 的位置：${r.skills_dir}`;
+  $("#styleCount").textContent = `${r.styles.length} / ${r.max} 个。安装位置：Claude Code ${r.skills_dir}；Codex（Desktop 里的 ChatGPT）${r.codex_skills_dir}。装过的风格修改后会自动更新。`;
   const pick = select || cur?.slug || r.styles[0]?.slug;
   $("#styleList").innerHTML = r.styles.map((s) => `<button class="style-item ${s.slug === pick ? "on" : ""}" onclick="openStyle('${s.slug}')">
       <strong>${esc(s.name)}</strong> ${s.preset ? '<span class="pill">内置</span>' : '<span class="pill">自定义</span>'}
@@ -808,7 +808,7 @@ async function duplicateStyle() {
 async function restoreStyle() { if (confirm("恢复为内置预设？当前内容会保留在版本历史里。")) { try { await post(`/api/styles/${cur.slug}/restore`); await loadStyles(cur.slug); } catch (e) { alert(e.message); } } }
 async function restoreMissing(slug) { try { await post(`/api/styles/${slug}/restore`); await loadStyles(slug); } catch (e) { alert(e.message); } }
 async function revertTo(v) { if (confirm(`回退到 v${v}？会生成一个新版本。`)) { await post(`/api/styles/${cur.slug}/revert`, {version: v}); await loadStyles(cur.slug); } }
-async function installStyle() { try { const r = await post(`/api/styles/${cur.slug}/install`); $("#edMsg").textContent = "已安装到 " + r.path; loadStyles(cur.slug); } catch (e) { $("#edMsg").textContent = e.message; } }
+async function installStyle() { try { const r = await post(`/api/styles/${cur.slug}/install`); $("#edMsg").textContent = "已安装：" + Object.entries(r.paths || {}).map(([k, v]) => `${k} → ${v}`).join("；") + "。ChatCut Desktop 里新开对话即可使用。"; loadStyles(cur.slug); } catch (e) { $("#edMsg").textContent = e.message; } }
 async function deleteStyle() {
   if (!confirm(`删除「${cur.profile.name}」及其全部版本？`)) return;
   await api("/api/styles/" + cur.slug, {method: "DELETE"}); cur = null; loadStyles();

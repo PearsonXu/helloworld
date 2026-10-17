@@ -19,6 +19,20 @@ DATA_DIR = DATA_ROOT / "styles"
 CLAUDE_SKILLS_DIR = Path(os.environ.get("CHATCUT_STUDIO_SKILLS_DIR", Path.home() / ".claude" / "skills"))
 
 
+def codex_skills_dir() -> Path:
+    """Codex（ChatCut Desktop 里的「ChatGPT」Agent）读 skill 的目录：$CODEX_HOME/skills，默认 ~/.codex/skills。"""
+    from .gateway import codex_config_path
+    return codex_config_path().parent / "skills"
+
+
+def _targets(slug: str) -> dict[str, Path]:
+    return {"Claude Code": CLAUDE_SKILLS_DIR / slug / "SKILL.md", "Codex": codex_skills_dir() / slug / "SKILL.md"}
+
+
+def installed(slug: str) -> bool:
+    return any(p.exists() for p in _targets(slug).values())
+
+
 class LimitReached(Exception):
     pass
 
@@ -43,6 +57,8 @@ def _write(slug: str, p: StyleProfile, note: str) -> None:
     d.mkdir(parents=True, exist_ok=True)
     (d / "style.json").write_text(p.model_dump_json(indent=2), "utf-8")
     (d / "SKILL.md").write_text(render_skill_md(p, slug), "utf-8")
+    if installed(slug):          # 装过的风格改了之后自动更新，Agent 下次用的就是新版
+        install(slug)
     with open(d / "history.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": int(time.time()), "note": note, "profile": p.model_dump()}, ensure_ascii=False) + "\n")
 
@@ -71,7 +87,7 @@ def list_styles() -> list[dict]:
         p = StyleProfile.model_validate_json((_dir(slug) / "style.json").read_text("utf-8"))
         out.append({"slug": slug, "name": p.name, "description": p.description, "preset": slug in PRESETS,
                     "versions": len(_history(slug)),
-                    "installed": (CLAUDE_SKILLS_DIR / slug / "SKILL.md").exists()})
+                    "installed": installed(slug)})
     return out
 
 
@@ -136,12 +152,15 @@ def delete(slug: str) -> None:
     shutil.rmtree(_dir(slug), ignore_errors=True)
 
 
-def install(slug: str) -> str:
-    """复制到 ~/.claude/skills/<slug>/SKILL.md，Claude Code（以及 ChatCut Desktop 里选用的 Claude Code agent）可加载。"""
+def install(slug: str) -> dict[str, str]:
+    """复制到 Claude Code（~/.claude/skills）和 Codex（~/.codex/skills）的 skill 目录：
+    ChatCut Desktop 里选「Claude」或「ChatGPT」（Codex）的 Agent 都能加载，不管它背后用的是 DeepSeek 还是 Claude。"""
     src = _dir(slug) / "SKILL.md"
     if not src.exists():
         raise FileNotFoundError(slug)
-    dst = CLAUDE_SKILLS_DIR / slug / "SKILL.md"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src, dst)
-    return str(dst)
+    out = {}
+    for name, dst in _targets(slug).items():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dst)
+        out[name] = str(dst)
+    return out

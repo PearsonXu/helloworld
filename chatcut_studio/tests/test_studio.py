@@ -110,8 +110,13 @@ def test_styles_api_and_install():
     r = c.get("/api/styles").json()
     assert r["max"] == 5 and len(r["styles"]) == 5
     assert c.post("/api/styles", json={"profile": profile().model_dump()}).status_code == 409
-    path = c.post("/api/styles/guofeng-lyric-mv/install").json()["path"]
+    r = c.post("/api/styles/guofeng-lyric-mv/install").json()
+    path, paths = r["path"], r["paths"]
     assert path.endswith("guofeng-lyric-mv/SKILL.md") and os.path.exists(path)
+    assert paths["Codex"].endswith(os.path.join(".codex", "skills", "guofeng-lyric-mv", "SKILL.md")) and os.path.exists(paths["Codex"])
+    assert open(paths["Codex"], encoding="utf-8").read().startswith("---\nname: guofeng-lyric-mv\n")   # Codex 也认这个 frontmatter
+    styles.update("guofeng-lyric-mv", profile(name="清新国风歌词MV v2"), "改名")                                # 装过的风格改了自动更新
+    assert "清新国风歌词MV v2" in open(paths["Codex"], encoding="utf-8").read()
     assert c.get("/api/styles/..%2Fetc").status_code == 404
     assert c.post("/api/styles/nope/revert", json={"version": 1}).status_code == 404
 
