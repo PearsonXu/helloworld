@@ -39,6 +39,7 @@ AUDIO_EXT = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp"}
 
 JOBS: dict[str, dict] = {}       # 歌名 → 正在跑的后台任务（人声分离 / 导出）
+JOB_FILE = ".job.json"           # 任务也记在歌曲目录里：Studio 被意外结束、重启后据此续跑（见 resume_jobs）
 
 
 class SongError(Exception):
@@ -180,6 +181,14 @@ async def separate(name: str, model: str = DEFAULT_MODEL) -> None:
     """后台任务：在独立进程里跑 audio-separator（出错 / 显存不够不会拖垮 Studio）。"""
     d = song_dir(name)
     job = JOBS[d.name] = {"kind": "separate", "status": "running", "progress": 0, "message": "准备中（第一次会下载模型）…"}
+    _record(d, {"kind": "separate", "model": model})
+    try:
+        await _separate(d, model, job)
+    finally:
+        _record(d, None if job["status"] == "done" else {"kind": "separate", "model": model, "status": job["status"]})
+
+
+async def _separate(d: Path, model: str, job: dict) -> None:
     ok, why = separator_ready()
     if not ok:
         job.update(status="error", message=why)
@@ -468,8 +477,9 @@ def export(name: str, shift: int, formant: bool = True) -> list[str]:
         shift_audio(track_path(d, tr), wav, shift, formant and tr != "inst")     # 伴奏没有共振峰的问题
         made.append(wav.name)
         if tr == "mix":             # Suno 上传用 mp3 更方便
-            mp3 = out_dir / f"{cn}_{lab}.mp3"
-            _run([_ffmpeg(), "-y", "-v", "error", "-i", str(wav), "-c:a", "libmp3lame", "-b:a", "320k", str(mp3)])
+            mp3, tmp = out_dir / f"{cn}_{lab}.mp3", out_dir / f".{cn}_{lab}.tmp.mp3"    # 写完再改名：中途被结束不会留下半个文件
+            _run([_ffmpeg(), "-y", "-v", "error", "-i", str(wav), "-c:a", "libmp3lame", "-b:a", "320k", str(tmp)])
+            os.replace(tmp, mp3)
             made.append(mp3.name)
     write_manifest(name)
     return made
@@ -478,11 +488,76 @@ def export(name: str, shift: int, formant: bool = True) -> list[str]:
 async def export_job(name: str, shift: int, formant: bool) -> None:
     d = song_dir(name)
     job = JOBS[d.name] = {"kind": "export", "status": "running", "progress": 0, "message": f"导出 {shift_label(shift)} …"}
+    _record(d, {"kind": "export", "shift": shift, "formant": formant})
     try:
         files = await asyncio.to_thread(export, name, shift, formant)
         job.update(status="done", progress=100, message="已导出：" + "、".join(files))
     except Exception as e:
         job.update(status="error", message=f"导出失败：{e}")
+    finally:
+        _record(d, None if job["status"] == "done" else {"kind": "export", "shift": shift, "formant": formant, "status": job["status"]})
+
+
+# ---------------------------------------------------------------- 重启后续跑
+def _record(d: Path, rec: dict | None) -> None:
+    """记下正在跑的任务（status 缺省 = running）；None = 已完成，删掉记录。"""
+    f = d / JOB_FILE
+    if rec is None:
+        f.unlink(missing_ok=True)
+    else:
+        f.write_text(json.dumps({"status": "running", **rec}, ensure_ascii=False), encoding="utf-8")
+
+
+def _finished(d: Path, rec: dict) -> bool:
+    """任务的结果是不是已经在硬盘上了（Studio 恰好在写完结果、删记录之前被结束）。"""
+    if rec.get("kind") == "separate":
+        return (d / DIRS["stems"] / "人声.wav").is_file() and (d / DIRS["stems"] / "伴奏.wav").is_file()
+    if rec.get("kind") == "export":
+        lab, out = shift_label(int(rec.get("shift", 0))), d / DIRS["shift"]
+        need = [f"混音_{lab}.wav", f"混音_{lab}.mp3"] + ([f"人声_{lab}.wav", f"伴奏_{lab}.wav"] if (d / DIRS["stems"] / "人声.wav").is_file() else [])
+        return all((out / n).is_file() and (out / n).stat().st_size > 0 for n in need)
+    return True
+
+
+def _analyze_quietly(name: str) -> None:
+    try:
+        analyze(name)
+    except Exception:
+        pass
+
+
+def resume_jobs() -> list[tuple[str, str]]:
+    """Studio 启动时调用：上次没做完（被结束时还在跑）的任务重新跑；结果已经在的、出错停下的都不动。
+    返回 [(歌名, 任务类型)]，也就是这次重新开始的任务。"""
+    if not SONGS_ROOT.is_dir():
+        return []
+    started = []
+    for d in sorted(SONGS_ROOT.iterdir()):
+        f = d / JOB_FILE
+        if not f.is_file():
+            continue
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            f.unlink(missing_ok=True)
+            continue
+        if rec.get("status") != "running":
+            continue
+        if _finished(d, rec):
+            f.unlink(missing_ok=True)
+            if rec.get("kind") == "separate" and not (d / "analysis.json").is_file():    # 分离完了，只差音域分析
+                asyncio.get_running_loop().create_task(asyncio.to_thread(_analyze_quietly, d.name))
+            continue
+        if rec.get("kind") == "separate":
+            coro = separate(d.name, rec.get("model") or DEFAULT_MODEL)
+        elif rec.get("kind") == "export":
+            coro = export_job(d.name, int(rec.get("shift", 0)), bool(rec.get("formant", True)))
+        else:
+            f.unlink(missing_ok=True)
+            continue
+        asyncio.get_running_loop().create_task(coro)
+        started.append((d.name, rec["kind"]))
+    return started
 
 
 # ---------------------------------------------------------------- 歌词 → 配图提示词

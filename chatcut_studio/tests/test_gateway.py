@@ -276,3 +276,21 @@ def test_namespaced_mcp_tools_reach_the_model():
     assert items[0]["type"] == "function_call" and items[0]["name"] == "edit_captions" and items[0]["namespace"] == "mcp__chatcut_desktop"
     long = ra.flat_name("mcp__" + "x" * 40, "y" * 40)
     assert len(long) <= 64 and long == ra.flat_name("mcp__" + "x" * 40, "y" * 40)
+
+
+def test_agent_guard_written_on_link_and_removed_on_unlink(isolated_data):
+    """接入时在 Agent 的全局说明里写「别按名字结束 python」；用户自己写的内容不动；断开时删掉。"""
+    home = isolated_data / "home"
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "AGENTS.md").write_text("# 我的规则\n回答用中文。\n", "utf-8")
+    settings.update({"providers": [{"id": "deepseek", "base_url": "https://api.deepseek.com", "model": "deepseek-v4-pro", "api_key": "sk-x-1234567890"}]})
+    gateway.link_codex()
+    gateway.link_codex()                                               # 重复接入只保留一份
+    text = (home / ".codex" / "AGENTS.md").read_text("utf-8")
+    assert text.startswith("# 我的规则\n回答用中文。") and text.count(gateway.GUARD_BEGIN) == 1
+    assert "Stop-Process -Name python" in text and "chatcut_studio" in text
+    gateway.link()
+    assert gateway.GUARD_BEGIN in (home / ".claude" / "CLAUDE.md").read_text("utf-8")
+    gateway.unlink_codex(); gateway.unlink()
+    assert (home / ".codex" / "AGENTS.md").read_text("utf-8") == "# 我的规则\n回答用中文。\n"
+    assert (home / ".claude" / "CLAUDE.md").read_text("utf-8") == ""

@@ -393,6 +393,7 @@ def link() -> dict:
         settings.set_gateway_backup({k: env.get(k) for k in ENV_KEYS})
     env.update(claude_env(s))
     _write_claude(data)
+    set_guard("Claude Code", True)
     return status()
 
 
@@ -410,6 +411,7 @@ def unlink() -> dict:
         data.pop("env")
     _write_claude(data)
     settings.set_gateway_backup({})
+    set_guard("Claude Code", False)
     return status()
 
 
@@ -434,7 +436,7 @@ def status() -> dict:
         p, how, model, problem = None, "", "", str(e)
     import shutil
     return {"url": gateway_url(), "linked": linked(s), "claude_settings": str(claude_settings_path()),
-            "codex_linked": codex_linked(s), "codex_config": str(codex_config_path()),
+            "codex_linked": codex_linked(s), "codex_config": str(codex_config_path()), "codex_resume": codex_resume_ready(),
             "codex_installed": bool(shutil.which("codex")), "claude_installed": bool(shutil.which("claude")),
             "provider": g.provider, "provider_label": p.label if p else "", "how": how, "model": model,
             "small_model": g.small_model, "mode": g.mode, "problem": problem}
@@ -492,6 +494,11 @@ async def _handle_responses(body: dict, headers, rec: dict) -> Response:
     req, tr = ra.to_chat(body, model)
     rec["tools"] = len(req.get("tools") or [])
     rec["skipped"] = tr.skipped
+    # 连接检查用：Agent 这次带来了哪些 ChatCut 工具、哪些 skill（Codex 在说明里列出每个 skill 的 SKILL.md 路径）
+    rec["chatcut_tools"] = [t["function"]["name"] for t in req.get("tools") or []
+                            if t.get("type") == "function" and "chatcut" in t["function"]["name"].lower()]
+    rec["chatcut_results"] = _chatcut_results(body)
+    rec["skills"] = sorted(set(re.findall(r"[\\/]+([^\\/\s\"'`()<>]+)[\\/]+SKILL\.md", json.dumps(body, ensure_ascii=False))))
     rid = "resp_" + uuid.uuid4().hex[:24]
 
     if not body.get("stream"):
@@ -502,6 +509,7 @@ async def _handle_responses(body: dict, headers, rec: dict) -> Response:
         if status >= 400:
             return _resp_error(status, f"{p.label}：{(data.get('error') or {}).get('message') or data}")
         items, usage = ra.from_chat(data, tr)
+        rec["calls"] = _calls(items)
         return JSONResponse(ra.response_obj(rid, model, "completed", items, usage))
 
     async def stream():
@@ -522,11 +530,36 @@ async def _handle_responses(body: dict, headers, rec: dict) -> Response:
             yield ev("response.failed", response=ra.response_obj(rid, model, "failed", [], None, {"code": str(status), "message": msg}))
             return
         items, usage = ra.from_chat(data, tr)
+        rec["calls"] = _calls(items)
         for i, it in enumerate(items):
             for b in ra.item_events(ev, i, it):
                 yield b
         yield ev("response.completed", response=ra.response_obj(rid, model, "completed", items, usage))
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+TOOL_FAILED = re.compile(r"requires approval|rejected|denied|cancell?ed|not found|unknown tool|error|失败|拒绝", re.I)
+
+
+def _chatcut_results(body: dict) -> list[dict]:
+    """这次请求里带回来的 ChatCut 工具结果（上一轮调用的）：工具真的执行成功了没有。"""
+    items = body.get("input") if isinstance(body.get("input"), list) else []
+    names = {it.get("call_id"): (it.get("namespace") or "").removeprefix("mcp__") + "/" + it.get("name", "")
+             for it in items if it.get("type") == "function_call" and "chatcut" in ((it.get("namespace") or "") + it.get("name", "")).lower()}
+    out = []
+    for it in items:
+        if it.get("type") == "function_call_output" and it.get("call_id") in names:
+            o = it.get("output")
+            text = o if isinstance(o, str) else " ".join(str(x.get("text", "")) for x in o or [] if isinstance(x, dict))
+            text = re.sub(r"^Wall time:[^\n]*\n(Output:\s*)?", "", text.strip())      # Codex 给工具结果加的耗时说明
+            out.append({"tool": names[it["call_id"]], "ok": not TOOL_FAILED.search(text[:300]), "text": text[:200]})
+    return out
+
+
+def _calls(items: list[dict]) -> list[str]:
+    """模型这一轮要调用的工具（MCP 工具写成「服务器/工具名」）。"""
+    return [(it["namespace"].removeprefix("mcp__") + "/" if it.get("namespace") else "") + it["name"]
+            for it in items if it.get("type") == "function_call"]
 
 
 CODEX_PROVIDER = "chatcut_studio"
@@ -599,9 +632,19 @@ def link_codex() -> dict:
              f'model = "{model}"', *top, *_drop_our_table(rest), "",
              f"[model_providers.{CODEX_PROVIDER}]", f'name = "ChatCut Studio · {p.label}"',
              f'base_url = "{gateway_url()}/openai/v1"', 'wire_api = "responses"',
+             # Studio 被意外结束、自动重启的那几秒里多重试几次，Desktop 里的任务接着做，不用重来
+             "request_max_retries = 20", "stream_max_retries = 20",
              f'experimental_bearer_token = "{s.gateway.token}"']
     _write_codex("\n".join(lines) + "\n")
+    set_guard("Codex", True)
     return status()
+
+
+def codex_resume_ready() -> bool:
+    """接入的 Codex 是否已经带上「掉线续跑」：重试设置 + 不许结束 Studio 的注意事项（旧版本接入的没有）。"""
+    f = agent_guard_files()["Codex"]
+    return ("stream_max_retries" in _codex_read()
+            and f.is_file() and GUARD_BEGIN in f.read_text(encoding="utf-8", errors="replace"))
 
 
 def unlink_codex() -> dict:
@@ -612,4 +655,46 @@ def unlink_codex() -> dict:
     text = "\n".join([*restored, *top, *_drop_our_table(rest)]).strip()
     _write_codex(text + "\n" if text else "")
     settings.set_gateway_backup({}, "codex_backup")
+    set_guard("Codex", False)
     return status()
+
+
+# ---------------------------------------------------------------- 给 Agent 的注意事项（全局说明文件）
+GUARD_BEGIN = "<!-- ChatCut Studio 注意事项：开始（接入时由 Studio 写入，断开时删除） -->"
+GUARD_END = "<!-- ChatCut Studio 注意事项：结束 -->"
+
+
+def guard_text() -> str:
+    port = os.environ.get("PORT", "8765")
+    return "\n".join([
+        GUARD_BEGIN,
+        "## 本机进程注意事项（ChatCut Studio）",
+        "",
+        f"- 本机运行着 ChatCut Studio（命令行 `python -m chatcut_studio`，监听 127.0.0.1:{port}），它是你连接模型的网关。"
+        "结束它，你自己的会话就会断开。",
+        "- 不要按名字批量结束进程：不要用 `Stop-Process -Name python`、`taskkill /IM python.exe`、`pkill python`、`killall python` 这类命令。",
+        "- 只结束你自己启动的进程：启动时记下进程号（例如 `$p = Start-Process python -ArgumentList ... -PassThru` 后用 `$p.Id`），"
+        "需要停止时用 `Stop-Process -Id <进程号>`。",
+        "- 不确定是哪个进程时先列出来：`Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Select-Object ProcessId, CommandLine`，"
+        "跳过命令行里带 chatcut_studio 的进程。",
+        GUARD_END,
+    ])
+
+
+def agent_guard_files() -> dict[str, Path]:
+    return {"Codex": codex_config_path().parent / "AGENTS.md", "Claude Code": claude_settings_path().parent / "CLAUDE.md"}
+
+
+def set_guard(which: str, on: bool) -> None:
+    """在 Agent 的全局说明文件里写入 / 删除注意事项（只动标记之间的内容，用户自己写的不碰）。"""
+    f = agent_guard_files()[which]
+    text = f.read_text("utf-8") if f.is_file() else ""
+    if GUARD_BEGIN in text and GUARD_END in text:
+        a, rest = text.split(GUARD_BEGIN, 1)
+        text = a.rstrip("\n") + rest.split(GUARD_END, 1)[1]
+    text = text.strip("\n")
+    if on:
+        text = (text + "\n\n" if text else "") + guard_text()
+    if text or f.is_file():
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text + "\n" if text else "", "utf-8")

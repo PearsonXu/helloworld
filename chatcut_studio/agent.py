@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 MODEL = os.environ.get("CHATCUT_STUDIO_MODEL", "claude-opus-5-5")
@@ -236,22 +238,52 @@ def pick_runner() -> Runner:
     return api_runner if settings.load().agent_mode == "api" else sdk_runner
 
 
+MAX_RESUMES = 3      # 同一个任务最多自动续跑几次（防止任务本身每次都把 Studio 弄崩、无限重来）
+RESUME_NOTE = ("【续跑】上次执行这个任务时 ChatCut Studio 被意外结束，任务没有做完。"
+               "先读取当前打开的项目和时间线，弄清楚哪些步骤已经做过：做过的不要重复（尤其不要重复生成、导出、上传，"
+               "那会重复花积分），只把没完成的部分做完；如果检查后发现任务其实已经全部完成，直接说明即可，不要做任何改动。"
+               "\n\n原任务如下：\n\n")
+
+
 class RunManager:
-    def __init__(self, runner: Runner | None = None):
+    """运行中的任务同时记在 <数据目录>/runs/<id>.json：正常结束（完成或出错）就删掉；
+    Studio 被意外结束时记录留着，下次启动 resume() 自动续跑。"""
+
+    def __init__(self, runner: Runner | None = None, store: Path | None = None):
         self.runner = runner  # None = 每次运行时按当前设置选择
         self.runs: dict[str, Run] = {}
+        self._store = store
 
-    def start(self, prompt: str) -> Run:
+    @property
+    def store(self) -> Path:
+        if self._store:
+            return self._store
+        from . import settings
+
+        return settings.DATA_ROOT / "runs"
+
+    def _save(self, rec: dict) -> None:
+        self.store.mkdir(parents=True, exist_ok=True)
+        (self.store / f"{rec['id']}.json").write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+
+    def start(self, prompt: str, *, run_id: str | None = None, task_prompt: str | None = None, resumes: int = 0) -> Run:
         runner = self.runner or pick_runner()
-        run = Run(id=uuid.uuid4().hex[:12], prompt=prompt)
+        run = Run(id=run_id or uuid.uuid4().hex[:12], prompt=prompt)
         self.runs[run.id] = run
+        self._save({"id": run.id, "prompt": task_prompt or prompt, "resumes": resumes})
 
         async def _go():
+            finished = False
             try:
                 await runner(run)
+                finished = True
             except Exception as e:  # 把错误送回界面，而不是让后台任务静默失败
+                finished = True
                 await run.emit({"type": "error", "message": f"{type(e).__name__}: {e}"})
             finally:
+                # 跑完 / 出错 = 结束了，删记录；被取消（Studio 关闭）= 没做完，记录留着下次续跑
+                if finished:
+                    (self.store / f"{run.id}.json").unlink(missing_ok=True)
                 run.done = True
                 for fut in run.pending.values():
                     if not fut.done():
@@ -260,3 +292,30 @@ class RunManager:
 
         asyncio.get_running_loop().create_task(_go())
         return run
+
+    def resume(self) -> list[Run]:
+        """Studio 启动时调用：把上次没做完的任务接着做；已经完成的任务没有记录，不会再执行。"""
+        if not self.store.is_dir():
+            return []
+        out = []
+        for f in sorted(self.store.glob("*.json"), key=lambda x: x.stat().st_mtime):
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+                run_id, prompt, n = rec["id"], rec["prompt"], int(rec.get("resumes", 0))
+            except (OSError, ValueError, KeyError):
+                f.unlink(missing_ok=True)
+                continue
+            if run_id in self.runs:
+                continue
+            if n >= MAX_RESUMES:
+                f.unlink(missing_ok=True)
+                continue
+            run = self.start(RESUME_NOTE + prompt, run_id=run_id, task_prompt=prompt, resumes=n + 1)
+            run.history.insert(0, {"type": "text", "text": f"（Studio 重启了，这个任务上次没做完，正在自动续跑：第 {n + 1} 次）"})
+            out.append(run)
+        return out
+
+    def active(self) -> Run | None:
+        """最近一个还没结束的任务（页面刷新 / Studio 重启后让界面重新接上）。"""
+        live = [r for r in self.runs.values() if not r.done]
+        return live[-1] if live else None

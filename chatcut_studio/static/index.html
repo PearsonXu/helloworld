@@ -81,63 +81,37 @@
 <body>
 <header>
   <h1>ChatCut Studio</h1>
-  <p>歌曲工坊：原曲 → 分离人声 → 降调 → 素材文件夹；也可以连接模型，交给 Agent 在 ChatCut 里剪。</p>
+  <p>在 ChatCut Desktop 里用 Agent（「ChatGPT」按钮），模型走这里接的 API。歌曲工坊、风格、面板里直接剪等在「更多功能」里。</p>
 </header>
 <nav>
-  <button data-tab="songs" class="on">🎵 歌曲工坊</button>
-  <button data-tab="conn">① 连接设置</button>
-  <button data-tab="styles">② 常用风格</button>
-  <button data-tab="run">③ 一键剪辑</button>
+  <button data-tab="desk" class="on">🖥 Desktop + Agent</button>
+  <span id="moreTabs" style="display:none">
+    <button data-tab="songs">🎵 歌曲工坊</button>
+    <button data-tab="conn">面板直连设置</button>
+    <button data-tab="styles">常用风格</button>
+    <button data-tab="run">面板一键剪辑</button>
+  </span>
+  <button id="moreBtn" class="btn small" onclick="toggleMore()" style="margin-left:auto">更多功能 ▾</button>
 </nav>
 <main>
 
-<!-- 🎵 歌曲工坊 -->
-<section id="songs" class="on">
+<!-- 🖥 ChatCut Desktop + Agent（主要用法） -->
+<section id="desk" class="on">
   <div class="card">
-    <h2>新建一首歌</h2>
-    <p class="sub">选原曲（mp4 视频或 mp3 / wav 等音频），会在 <code id="songRoot"></code> 下建一个文件夹，所有素材按步骤放在里面。</p>
-    <div class="grid">
-      <label>歌名<input id="newSongName" placeholder="留空用文件名"></label>
-      <label>原曲文件<input id="newSongFile" type="file" accept="video/*,audio/*"></label>
-    </div>
-    <div class="row" style="margin-top:10px"><button class="btn primary" onclick="songCreate()">导入</button>
-      <span id="newSongMsg" class="muted"></span></div>
-    <div id="songList" class="row" style="margin-top:10px;flex-wrap:wrap"></div>
+    <h2>连接检查</h2>
+    <p class="sub">三步分开测，哪一环断了一眼就能看出来。全部通过 = Desktop 里的 Agent 能用这里的模型，并且能操作 Desktop 里的项目、用上本地 skill。</p>
+    <div class="tablewrap"><table>
+      <tr><td style="width:190px"><strong>1. API 连接</strong><div class="muted" style="font-size:12px">通过网关调一次模型</div></td>
+        <td id="ckApi" class="muted">未检查</td><td style="width:90px"><button class="btn small" onclick="ck('api')">检查</button></td></tr>
+      <tr><td><strong>2. ChatCut Desktop</strong><div class="muted" style="font-size:12px">本机 MCP 能不能连上</div></td>
+        <td id="ckDesktop" class="muted">未检查</td><td><button class="btn small" onclick="ck('desktop')">检查</button></td></tr>
+      <tr><td><strong>3. Agent ↔ Desktop</strong><div class="muted" style="font-size:12px">Agent 有没有拿到 Desktop 的工具和本地 skill</div></td>
+        <td id="ckAgent" class="muted">未检查</td><td><button class="btn small" onclick="ck('agent', false)">快速</button>
+          <button class="btn small" onclick="ck('agent', true)" title="在本机真的跑一次 Codex，让它用只读工具读取当前项目（约 1 分钟，会用一点模型额度）">现场测试</button></td></tr>
+    </table></div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" onclick="ckAll()">全部检查</button>
+      <span class="muted">「全部检查」第 3 步用快速模式（只看配置和 Desktop 最近的对话）；要确认真能调用工具，点「现场测试」。</span></div>
   </div>
-  <div id="songDetail"></div>
-</section>
-
-<!-- ① 连接设置 -->
-<section id="conn">
-  <div class="card">
-    <h2>用哪个模型</h2>
-    <p class="sub">一键切换：剪辑 Agent、风格优化、歌曲工坊的配图提示词，以及 ChatCut Desktop 里的 Agent（接入后）都改用这里选的模型。Key 和具体型号在下面「模型服务商」里填。</p>
-    <div id="modelSwitch" class="row" style="flex-wrap:wrap;gap:10px"></div>
-    <div id="modelMsg" class="muted" style="margin-top:6px"></div>
-  </div>
-
-  <div class="card">
-    <h2>剪辑 Agent 用什么驱动</h2>
-    <p class="sub">两种方式二选一，随时可以切换。</p>
-    <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px;margin-bottom:8px">
-      <input type="radio" name="agent_mode" value="claude_code" style="margin-top:5px">
-      <span><strong>Claude Code 插件</strong>：用本机已安装、已登录的 Claude Code 和 ChatCut 官方插件，在下方「Claude Code 方式」里检查和安装。</span></label>
-    <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px">
-      <input type="radio" name="agent_mode" value="api" style="margin-top:5px">
-      <span><strong>API 模型直连 ChatCut</strong>：不需要 Claude Code，用 DeepSeek、通义千问、Kimi、GLM 或 Claude API 等任意模型，本程序直接连接 ChatCut MCP。</span></label>
-    <div class="grid" style="margin-top:12px">
-      <label>API 方式使用的模型服务商（分开设置时用）<select id="agent_provider"></select></label>
-      <label>风格优化使用的模型服务商（分开设置时用）<select id="style_provider"></select></label>
-    </div>
-    <div class="row" style="margin-top:10px"><button class="btn primary" onclick="saveModes()">保存</button><span id="modeMsg" class="muted"></span></div>
-  </div>
-
-  <div class="card">
-    <h2>模型服务商</h2>
-    <p class="sub">填入 API Key 后点「获取模型列表」选择模型。Key 只保存在本机 <code>chatcut_studio/data/settings.json</code>，也可以用环境变量提供。</p>
-    <div id="providers"></div>
-  </div>
-
   <div class="card">
     <h2>在 ChatCut Desktop 里用 <span class="gwName">DeepSeek</span></h2>
     <p class="sub">ChatCut Desktop 的 AI 面板里，输入框旁边的 Agent 按钮列出的是本机装好的 Agent：「<strong>ChatGPT</strong>」就是本机的 Codex，「Claude」是 Claude Code。
@@ -172,6 +146,55 @@
       ④ 重启 ChatCut Desktop，AI 面板 Agent 按钮选「ChatGPT」，新开一个对话。<br>
       注意：接入期间本机所有 Codex 会话都会用这里选的模型，而且 Studio 要保持运行；点「断开」恢复原来的设置。之后切换模型不用重新接入，下一次对话就生效。
       「Claude Code 方式」里的「一键安装插件」是给已装好的 Claude Code 装 ChatCut 插件，走 Codex 不需要它。</div>
+  </div>
+
+  <div class="card">
+    <h2>用哪个模型</h2>
+    <p class="sub">一键切换：剪辑 Agent、风格优化、歌曲工坊的配图提示词，以及 ChatCut Desktop 里的 Agent（接入后）都改用这里选的模型。Key 和具体型号在下面「模型服务商」里填。</p>
+    <div id="modelSwitch" class="row" style="flex-wrap:wrap;gap:10px"></div>
+    <div id="modelMsg" class="muted" style="margin-top:6px"></div>
+  </div>
+
+  <div class="card">
+    <h2>模型服务商</h2>
+    <p class="sub">填入 API Key 后点「获取模型列表」选择模型。Key 只保存在本机 <code>chatcut_studio/data/settings.json</code>，也可以用环境变量提供。</p>
+    <div id="providers"></div>
+  </div>
+
+</section>
+
+<!-- 🎵 歌曲工坊 -->
+<section id="songs">
+  <div class="card">
+    <h2>新建一首歌</h2>
+    <p class="sub">选原曲（mp4 视频或 mp3 / wav 等音频），会在 <code id="songRoot"></code> 下建一个文件夹，所有素材按步骤放在里面。</p>
+    <div class="grid">
+      <label>歌名<input id="newSongName" placeholder="留空用文件名"></label>
+      <label>原曲文件<input id="newSongFile" type="file" accept="video/*,audio/*"></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" onclick="songCreate()">导入</button>
+      <span id="newSongMsg" class="muted"></span></div>
+    <div id="songList" class="row" style="margin-top:10px;flex-wrap:wrap"></div>
+  </div>
+  <div id="songDetail"></div>
+</section>
+
+<!-- 更多功能：面板直连 ChatCut（不经过 Desktop 里的 Agent） -->
+<section id="conn">
+  <div class="card">
+    <h2>剪辑 Agent 用什么驱动</h2>
+    <p class="sub">两种方式二选一，随时可以切换。</p>
+    <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px;margin-bottom:8px">
+      <input type="radio" name="agent_mode" value="claude_code" style="margin-top:5px">
+      <span><strong>Claude Code 插件</strong>：用本机已安装、已登录的 Claude Code 和 ChatCut 官方插件，在下方「Claude Code 方式」里检查和安装。</span></label>
+    <label style="display:flex;align-items:flex-start;color:var(--ink);font-size:14px">
+      <input type="radio" name="agent_mode" value="api" style="margin-top:5px">
+      <span><strong>API 模型直连 ChatCut</strong>：不需要 Claude Code，用 DeepSeek、通义千问、Kimi、GLM 或 Claude API 等任意模型，本程序直接连接 ChatCut MCP。</span></label>
+    <div class="grid" style="margin-top:12px">
+      <label>API 方式使用的模型服务商（分开设置时用）<select id="agent_provider"></select></label>
+      <label>风格优化使用的模型服务商（分开设置时用）<select id="style_provider"></select></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" onclick="saveModes()">保存</button><span id="modeMsg" class="muted"></span></div>
   </div>
 
   <div class="card">
@@ -340,13 +363,22 @@ const post = (path, body) => api(path, {method: "POST", body: body === undefined
 let S = null;  // 设置
 
 function switchTab(id) {
-  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x.dataset.tab === id));
+  document.querySelectorAll("nav button[data-tab]").forEach((x) => x.classList.toggle("on", x.dataset.tab === id));
   document.querySelectorAll("section").forEach((s) => s.classList.toggle("on", s.id === id));
   if (id === "styles") loadStyles();
   if (id === "songs") loadSongs();
   if (id === "run") loadRunTab();
 }
-document.querySelectorAll("nav button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+document.querySelectorAll("nav button[data-tab]").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+// 主要用法是 Desktop + Agent：其他功能默认收起，点「更多功能」展开（记住选择）
+function toggleMore(show) {
+  if (show === undefined) show = $("#moreTabs").style.display === "none";
+  $("#moreTabs").style.display = show ? "contents" : "none";
+  $("#moreBtn").textContent = show ? "收起 ▴" : "更多功能 ▾";
+  try { localStorage.setItem("moreTabs", show ? "1" : ""); } catch (e) {}
+  if (!show && !$("#desk").classList.contains("on")) switchTab("desk");
+}
+try { if (localStorage.getItem("moreTabs")) toggleMore(true); } catch (e) {}
 
 // ================= 🎵 歌曲工坊 =================
 let SONGS = null, song = null, songPoll = null, songTrack = "mix", songFormant = true;
@@ -544,7 +576,10 @@ async function loadGateway() {
   document.querySelectorAll(".gwName").forEach((x) => x.textContent = nm);
   $("#gwStatus").innerHTML = (g.problem ? `<span style="color:var(--warn)">${esc(g.problem)}</span>`
       : `使用模型 <span class="mono">${esc(g.model)}</span>`) +
-    `　<span class="muted">网关 <span class="mono">${esc(g.url)}</span></span>`;
+    `　<span class="muted">网关 <span class="mono">${esc(g.url)}</span></span>` +
+    (g.codex_linked ? `<div style="margin-top:4px">${g.codex_resume
+      ? '<span class="pill ok">掉线续跑：已开启</span> <span class="muted">Studio 意外关掉、自动重启时，Desktop 里正在做的任务自动重连接着做；已经做完的任务不会重做</span>'
+      : '<span class="pill warn">掉线续跑：未开启</span> <span class="muted">点一下「重新接入」</span>'}</div>` : "");
   const st = (installed, linked, file) => !installed && !linked ? '<span class="pill warn">本机没装</span>'
     : (linked ? '<span class="pill ok">已接入</span>' : '<span class="pill warn">未接入</span>') + `<div class="muted mono" style="font-size:11px">${esc(file)}</div>`;
   $("#gwCodexSt").innerHTML = st(g.codex_installed, g.codex_linked, g.codex_config);
@@ -570,6 +605,25 @@ async function gwAgent(which, on) {
   catch (e) { $("#gwMsg").textContent = e.message; }
   loadGateway();
 }
+// ---- 连接检查 ----
+const CK_PILL = {ok: '<span class="pill ok">通过</span>', warn: '<span class="pill warn">注意</span>', fail: '<span class="pill fail">没通过</span>'};
+async function ck(what, live) {
+  const box = {api: "#ckApi", desktop: "#ckDesktop", agent: "#ckAgent"}[what];
+  $(box).innerHTML = what === "agent" && live ? "现场测试中…（本机运行一次 Codex，约 1 分钟）" : "检查中…";
+  try {
+    const r = await post(`/api/check/${what}` + (what === "agent" ? `?live=${!!live}` : ""));
+    if (what === "api") $(box).innerHTML = `${CK_PILL[r.ok ? "ok" : "fail"]} ${esc(r.provider || "")} <span class="mono">${esc(r.model || "")}</span>：${esc(r.message)}`;
+    else if (what === "desktop") $(box).innerHTML = `${CK_PILL[r.ok ? "ok" : "fail"]} ${esc(r.message)}${r.endpoint ? ` <span class="muted mono" style="font-size:11px">${esc(r.endpoint)}</span>` : ""}`;
+    else {
+      const lv = r.live;
+      $(box).innerHTML = `${CK_PILL[r.ok ? "ok" : r.findings.some((f) => f.level === "fail") ? "fail" : "warn"]}` +
+        r.findings.map((f) => `<div style="margin:3px 0">${CK_PILL[f.level]} ${esc(f.text)}</div>`).join("") +
+        (lv && lv.ran ? `<details><summary class="muted">现场测试：Codex 的输出</summary><pre style="white-space:pre-wrap;font-size:11px">${esc(lv.output || "")}</pre></details>` : "");
+    }
+    return r.ok;
+  } catch (e) { $(box).innerHTML = `${CK_PILL.fail} ${esc(e.message)}`; return false; }
+}
+async function ckAll() { await Promise.all([ck("api"), ck("desktop"), ck("agent", false)]); }
 async function gwDiagnose() {
   $("#gwDiag").innerHTML = '<div class="note">诊断中…会在本机实际调用一次 Claude Code，最多约 2 分钟。</div>';
   try {
@@ -848,6 +902,10 @@ async function startRun() {
   let id;
   try { ({id} = await api("/api/run", {method: "POST", body: runBody()})); } catch (e) { alert(e.message); return; }
   lastRun = {style: $("#runStyle").value, task: $("#task").value};
+  watchRun(id);
+}
+// 订阅一次运行的事件。Studio 重启后（任务会自动续跑，id 不变）断开的连接会自己重新接上
+function watchRun(id) {
   $("#log").innerHTML = ""; $("#runBtn").disabled = true; $("#afterRun").style.display = "none";
   const es = new EventSource(`/api/run/${id}/events`);
   es.onmessage = (m) => {
@@ -864,10 +922,19 @@ async function startRun() {
     }
     else if (ev.type === "result") logEv(`<strong>${ev.is_error ? "执行出错" : "完成"}</strong>　轮数 ${ev.turns}${ev.cost_usd != null ? "　费用约 $" + ev.cost_usd.toFixed(3) : ""}`);
     else if (ev.type === "error") logEv(esc(ev.message), "error");
-    else if (ev.type === "done") { es.close(); $("#runBtn").disabled = false; if (lastRun.style) $("#afterRun").style.display = ""; }
+    else if (ev.type === "done") { es.close(); $("#runBtn").disabled = false; if (lastRun?.style) $("#afterRun").style.display = ""; }
   };
-  es.onerror = () => { es.close(); $("#runBtn").disabled = false; };
+  es.onerror = () => {
+    es.close(); logEv("和 Studio 的连接断了，等它重新启动后自动接上…", "error");
+    const retry = async () => {
+      let now;
+      try { ({id: now} = await api("/api/run/active")); } catch (e) { setTimeout(retry, 3000); return; }   // 还没起来
+      if (now) watchRun(now); else { logEv("Studio 已重新启动，没有需要续跑的任务。"); $("#runBtn").disabled = false; }
+    };
+    setTimeout(retry, 3000);
+  };
 }
+api("/api/run/active").then(({id}) => { if (id) watchRun(id); }).catch(() => {});
 async function feedbackFromRun() {
   const fb = $("#runFeedback").value.trim(); if (!fb || !lastRun?.style) return;
   switchTab("styles"); await loadStyles(lastRun.style);

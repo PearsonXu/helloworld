@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 import json
 import uuid
@@ -91,8 +92,21 @@ def _style_or_404(fn, *args):
 
 
 def create_app(manager: RunManager | None = None) -> FastAPI:
-    app = FastAPI(title="ChatCut Studio")
     runs = manager or RunManager()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        # Studio 被意外结束（比如 Agent 执行了 Stop-Process -Name python）、run.bat 重新拉起之后：
+        # 上次没做完的剪辑任务和歌曲工坊后台任务自动接着做；做完的不再执行
+        try:      # 已接入的 Codex / Claude Code：补写新版本的重试设置和注意事项，不用用户再点「重新接入」
+            gateway.refresh_if_linked()
+        except Exception:
+            pass
+        runs.resume()
+        songlab.resume_jobs()
+        yield
+
+    app = FastAPI(title="ChatCut Studio", lifespan=lifespan)
     login_task: dict[str, asyncio.Task | None] = {"t": None}
 
     @app.get("/")
@@ -302,6 +316,22 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             raise HTTPException(400, f"操作失败：{e}")
         raise HTTPException(404, "未知操作")
 
+    # ---------- 连接检查：API / ChatCut Desktop / Agent 是否接上 Desktop 的工具和 skill ----------
+    @app.post("/api/check/api")
+    async def check_api():
+        from . import connect_check
+        return await connect_check.check_api()
+
+    @app.post("/api/check/desktop")
+    async def check_desktop():
+        from . import connect_check
+        return await connect_check.check_desktop()
+
+    @app.post("/api/check/agent")
+    async def check_agent(live: bool = True):
+        from . import connect_check
+        return await connect_check.check_agent(live)
+
     @app.get("/api/mcp/desktop/discover")
     async def desktop_discover():
         """查找本机 ChatCut Desktop 的 MCP 连接，并逐个试连。"""
@@ -499,6 +529,11 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.post("/api/run")
     async def start_run(req: RunReq):
         return {"id": runs.start(_prompt(req)).id}
+
+    @app.get("/api/run/active")
+    def active_run():
+        run = runs.active()
+        return {"id": run.id if run else None}
 
     @app.get("/api/run/{run_id}/events")
     async def run_events(run_id: str):

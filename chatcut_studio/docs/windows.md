@@ -48,7 +48,7 @@ powershell -ExecutionPolicy Bypass -File chatcut_studio\windows\setup.ps1 -Audio
 
 ## 二、启动
 
-双击 `chatcut_studio\windows\run.bat`，浏览器会打开 <http://127.0.0.1:8765>。
+双击 `chatcut_studio\windows\run.bat`，浏览器会打开 <http://127.0.0.1:8765>。Studio 被意外结束（比如 Agent 执行了 `Stop-Process -Name python`）时，这个窗口会在 3 秒后自动重新启动它；要退出就直接关掉窗口。
 
 | 命令 | 用途 |
 |---|---|
@@ -62,9 +62,16 @@ powershell -ExecutionPolicy Bypass -File chatcut_studio\windows\setup.ps1 -Audio
 
 ## 三、设置
 
-打开页面后按顺序：
+首页就是主要用法「🖥 Desktop + Agent」（在 ChatCut Desktop 里用 Agent，模型走 Studio 接的 API）：
 
-1. **① 连接设置**
+1. 在「模型服务商」里填 DeepSeek（或 Claude）的 Key 和型号，在「用哪个模型」里选它。
+2. 「在 ChatCut Desktop 里用 …」点「接入 Codex」，重启 ChatCut Desktop，AI 面板的 Agent 按钮选「ChatGPT」，新开对话。
+3. 打开 Desktop 里的项目，在最上面「连接检查」点「全部检查」；要确认 Agent 真能操作项目，点第 3 步的「现场测试」（本机跑一次 Codex，只开放读取类工具，约 1 分钟）。
+4. 显示「掉线续跑：已开启」：Studio 意外关掉、自动重启时，Desktop 里正在做的任务会自动重连接着做，做完的任务不会重做。
+
+其他功能在右上角「更多功能」里（会记住展开状态）：
+
+1. **面板直连设置**
    - **Agent 方式**：
      - 只有 API Key（DeepSeek、通义千问、Kimi、智谱、Claude API）→ 选「API 模型直连 ChatCut」，填 Key，点「获取模型列表」选模型。
      - 已装 Claude Code → 选「Claude Code 插件」，点「体检」，按提示「一键安装插件」，然后在 PowerShell 里运行页面给出的登录命令（`claude mcp login …`）。
@@ -73,9 +80,9 @@ powershell -ExecutionPolicy Bypass -File chatcut_studio\windows\setup.ps1 -Audio
      - **本机 ChatCut Desktop**（推荐）：先打开 ChatCut Desktop 和一个项目，点「自动查找」，选中「可连接」的那一项，点「保存并连接」。找不到时展开「手动填写」，填 Desktop 的本机地址或启动命令。
      - **ChatCut 云端**：点「保存并连接」，在弹出的浏览器里登录授权。
      - 连接成功后会列出 ChatCut 的全部工具和每个工具的权限策略。
-2. **② 常用风格**：选一个风格，改参数或写反馈让 AI 优化；歌词字幕区可以选「JIZURA 动态排版」、换主题、点「生成样张」预览。
+2. **常用风格**：选一个风格，改参数或写反馈让 AI 优化；歌词字幕区可以选「JIZURA 动态排版」、换主题、点「生成样张」预览。
 4. **🎵 歌曲工坊**：选原曲 mp4 →「导入」→「开始分离」→ 看建议降几度，试听降 2–6 各档 →「导出降 N」→ 打开 `02_降调` 把混音 mp3 传 Suno → 成品放进 `03_Suno成品` → 粘贴歌词，「用 DeepSeek 生成配图提示词」→ 出好的图放进 `05_配图`。整个歌曲文件夹就是素材包。
-3. **③ 一键剪辑**：选风格、写任务、列素材，交给 Agent；花积分 / 上传 / 删除 / 导出的操作会先弹确认。
+3. **面板一键剪辑**：选风格、写任务、列素材，交给 Agent；花积分 / 上传 / 删除 / 导出的操作会先弹确认。
 
 Key 也可以用环境变量提供（不写进文件）：
 
@@ -103,7 +110,7 @@ chatcut_studio\windows\run.bat
 ### 跑测试
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（83 个）
+.\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q            # 全部（90 个）
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests\test_jizura.py -q -x   # 只测动态排版，遇错即停
 .\.venv\Scripts\python.exe -m pytest chatcut_studio\tests -q -k lyrics   # 按名字筛选
 ```
@@ -167,4 +174,5 @@ chatcut_studio\windows\run.bat
 | 端口被占用 | `$env:PORT=8800` 后再启动 |
 | 降调导出报 `No such filter: 'rubberband'` | 你的 ffmpeg 没带这个滤镜。`git pull` 后运行 `.\.venv\Scripts\python.exe -m pip install -r chatcut_studio\requirements.txt`（会装 Python 版 Rubber Band，需要 Python 3.12+），重启 Studio |
 | Desktop 的 Agent 按钮里没有「Claude」 | 本机没装 Claude Code。用「ChatGPT」（Codex）接入 DeepSeek 即可，不需要 Claude Code |
+| Agent 跑了 `Stop-Process -Name python` 之后面板断联 | 它把 Studio（网关）也结束了。用 `run.bat` 启动会自动重启；Desktop 里的任务会自动重试接着做（首页显示「掉线续跑：已开启」）。如果 Desktop 里已经显示「stream disconnected」，点一下「重试」即可 |
 | 杀毒软件拦截 | 把 `helloworld\.venv` 和 `%LOCALAPPDATA%\ms-playwright` 加入信任 |

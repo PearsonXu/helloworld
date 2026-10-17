@@ -4,10 +4,11 @@
 
 | 页面 | 做什么 |
 |---|---|
-| ① 连接设置 | 选择剪辑 Agent 的驱动方式：**Claude Code 插件**，或 **API 模型直连 ChatCut**（Claude API、DeepSeek、通义千问、Kimi、智谱 GLM、任意 OpenAI 兼容服务）。填 API Key、一键获取模型列表；连接 ChatCut MCP 并列出全部工具及其权限策略；Claude Code 方式的体检和插件安装 |
-| ② 常用风格 | 内置 5 个常用风格（上限 5 个）。可以手动改参数，也可以用大白话写反馈，让 AI 给出修改建议，确认后保存为新版本；支持版本历史回退、恢复预设、复制为新风格、安装为 Agent 的 skill（同时装到 Claude Code `~/.claude/skills` 和 Codex `~/.codex/skills`，ChatCut Desktop 里选「Claude」或「ChatGPT」都能用；装过的风格修改后自动更新） |
+| 🖥 Desktop + Agent（首页，主要用法） | 在 ChatCut Desktop 里用 Agent（「ChatGPT」= Codex），模型走 Studio 接的 API：**连接检查**（API / ChatCut Desktop / Agent 有没有拿到 Desktop 的工具和本地 skill，三步分开测）、接入 Codex / Claude Code、DeepSeek / Claude 一键切换、填 Key 和型号。下面几页默认收在「更多功能」里 |
+| 面板直连设置 | 选择剪辑 Agent 的驱动方式：**Claude Code 插件**，或 **API 模型直连 ChatCut**（Claude API、DeepSeek、通义千问、Kimi、智谱 GLM、任意 OpenAI 兼容服务）。填 API Key、一键获取模型列表；连接 ChatCut MCP 并列出全部工具及其权限策略；Claude Code 方式的体检和插件安装 |
+| 常用风格 | 内置 5 个常用风格（上限 5 个）。可以手动改参数，也可以用大白话写反馈，让 AI 给出修改建议，确认后保存为新版本；支持版本历史回退、恢复预设、复制为新风格、安装为 Agent 的 skill（同时装到 Claude Code `~/.claude/skills` 和 Codex `~/.codex/skills`，ChatCut Desktop 里选「Claude」或「ChatGPT」都能用；装过的风格修改后自动更新） |
 | 歌词字幕 | 字幕参数里可以设「闪光扫过」（作用于关键词 / 整句 / 仅副歌，颜色和时长可调）；风格页可以用当前参数在背景图上「生成样张」；一键剪辑页可以按风格**在本地渲染整首歌**：整支视频（mp4），或透明字幕层（ProRes 4444 .mov，导入 ChatCut 叠加） |
-| ③ 一键剪辑 | 选风格 + 写任务 + 列素材，交给 Agent 执行；会花积分 / 上传 / 删除 / 导出的操作先在页面上弹确认。剪完可以直接写反馈，回到 ② 优化这次用的风格 |
+| 面板一键剪辑 | 选风格 + 写任务 + 列素材，交给 Agent 执行；会花积分 / 上传 / 删除 / 导出的操作先在页面上弹确认。剪完可以直接写反馈，回到 ② 优化这次用的风格 |
 
 ## 内置风格
 
@@ -39,7 +40,7 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 用假 ChatCut 时，在「连接设置」里把 MCP 地址改成 `http://127.0.0.1:8766/mcp`，认证选「不认证」，再配一个真实的模型 Key，就能测试「API 模型直连」整条链路。
 
-测试：`python3 -m pytest chatcut_studio/tests -q`（83 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
+测试：`python3 -m pytest chatcut_studio/tests -q`（90 个，含「模拟 DeepSeek + 模拟 ChatCut」走真实 HTTP 的端到端测试）
 
 ## 🎵 歌曲工坊（`songlab.py`）
 
@@ -121,6 +122,31 @@ ChatCut Desktop「Claude」 → Claude Code ─ Anthropic 接口 ─┴→ Studi
 **Desktop 里还是别的模型（比如 Qwen）？** 点「诊断：Desktop 里为什么不是 DeepSeek」（`diagnose.py`）：检查网关有没有收到过 Desktop 的请求；查系统 / 用户环境变量、Claude Code 的本地和托管设置里有没有优先级更高、指向别的模型的配置；扫 ChatCut Desktop 自己的配置目录里提到 Qwen 的地方；并在本机实际调用一次 Codex / Claude Code，看它们有没有走网关。结论会说明是该在 Desktop 里把 Agent 切到「Claude Code」，还是该删掉哪一项冲突配置。
 
 在 Studio 里剪也一样用 DeepSeek：「剪辑 Agent 用什么驱动」选 API 模型（默认 DeepSeek），「ChatCut 连接」选本机 ChatCut Desktop，到「③ 一键剪辑」下任务，改的就是 Desktop 里当前打开的项目。
+
+## 连接检查（`connect_check.py`）
+
+首页最上面，三步分开测，哪一环断了一眼看出来：
+
+| 步骤 | 怎么测 |
+|---|---|
+| 1. API 连接 | 通过网关调一次「用哪个模型」里选的模型（和 Desktop 里的 Agent 走同一条路） |
+| 2. ChatCut Desktop | Studio 自己连一次 Desktop 的本机 MCP，列出工具：Desktop 和项目有没有打开 |
+| 3. Agent ↔ Desktop | **快速**：Codex 配置里有没有登记 Desktop 的本机 MCP、`~/.codex/skills` 装了哪些 skill，以及网关记下的 Desktop 最近的对话：Codex 带来了几个 ChatCut 工具、哪些 skill、模型调用 ChatCut 工具后结果是成功还是失败。**现场测试**：在本机跑一次 `codex exec`（只读沙箱），这次运行里 Desktop 的 MCP 只开放读取类工具并免确认，让它读取当前项目，看工具真的执行成功没有 |
+
+已用真实 Codex 0.162.1 + 模拟 DeepSeek + 模拟 Desktop MCP 验证现场测试：Codex 只看到 `get_project` / `get_timeline`，调用成功读到「16:9」；同时看到装好的风格 skill。
+
+## 意外结束后自动续跑
+
+Agent 执行过 `Stop-Process -Name python` 这类按名字结束进程的命令时，会把 Studio（网关）一起结束，Desktop 里的对话就断了。现在：
+
+| | 做法 |
+|---|---|
+| 自动重启 | `run.bat` 循环启动：Studio 被结束 3 秒后自动重新启动（要退出直接关窗口） |
+| Desktop 里的任务接着做 | 接入 Codex 时写入 `request_max_retries = 20`、`stream_max_retries = 20`：Studio 重启的那几秒里 Codex 自动重试同一个请求，任务从断开的那一步接着做；已经做完的任务 Codex 不会再发，也就不会重做。已用真实 Codex 验证：Studio 晚 8 秒启动，任务照样完成 |
+| 防止再发生 | 接入时在 `~/.codex/AGENTS.md`（和 `~/.claude/CLAUDE.md`）里写一段注意事项：不要按名字结束 python，结束自己的进程用 PID；用户自己写的内容不动，断开时删掉 |
+| 旧版本接入的 | Studio 启动时自动补写上面两项，不用重新点「接入」；首页显示「掉线续跑：已开启」 |
+| 歌曲工坊后台任务 | 人声分离 / 降调导出记在歌曲目录的 `.job.json`：重启后没做完的重新跑；结果已经在的只清记录（只差音域分析的补做分析）；出错停下的不自动重跑。mp3 先写临时文件再改名，不会留下半个文件 |
+| 面板一键剪辑 | 运行中的任务记在 `data/runs/`：正常结束（完成或出错）删记录；被意外结束的重启后自动续跑，提示 Agent 先读取项目当前状态、做过的步骤不要重复（尤其不要重复生成 / 导出 / 上传）；同一任务最多续跑 3 次；页面断线后自动重新接上 |
 
 ## 连接本机 ChatCut Desktop（`desktop.py`）
 
