@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kindle Sender</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Kindle Sender</h1>
+    <p class="sub">把本地书籍发送到 Kindle · 发送前自动检查格式和大小</p>
+  </header>
+
+  <details id="settings" class="card">
+    <summary>邮箱设置 <span id="settings-status" class="pill"></span></summary>
+    <form id="config-form">
+      <label>Kindle 收件邮箱
+        <input name="kindle_email" type="email" placeholder="yourname@kindle.com" required>
+      </label>
+      <label>发件邮箱
+        <input name="sender_email" type="email" placeholder="you@qq.com" required>
+      </label>
+      <label>常用邮箱
+        <select id="preset">
+          <option value="">自定义</option>
+          <option value="smtp.qq.com|465|ssl|50">QQ 邮箱</option>
+          <option value="smtp.163.com|465|ssl|50">163 邮箱</option>
+          <option value="smtp.126.com|465|ssl|50">126 邮箱</option>
+          <option value="smtp.gmail.com|465|ssl|25">Gmail</option>
+          <option value="smtp.mail.me.com|587|starttls|20">iCloud</option>
+        </select>
+      </label>
+      <div class="row">
+        <label class="grow">SMTP 服务器
+          <input name="smtp_host" placeholder="smtp.qq.com" required>
+        </label>
+        <label>端口
+          <input name="smtp_port" type="number" min="1" max="65535" value="465">
+        </label>
+        <label>加密
+          <select name="smtp_security">
+            <option value="ssl">SSL</option>
+            <option value="starttls">STARTTLS</option>
+            <option value="none">无</option>
+          </select>
+        </label>
+      </div>
+      <label>SMTP 用户名 <small>（留空则使用发件邮箱）</small>
+        <input name="smtp_username" autocomplete="username">
+      </label>
+      <label>授权码 / 密码 <small id="pwd-hint"></small>
+        <input name="smtp_password" type="password" autocomplete="current-password">
+      </label>
+      <div class="row">
+        <label class="grow">单个文件上限 (MB)
+          <input name="max_file_mb" type="number" min="1" step="0.1">
+        </label>
+        <label class="grow">发件邮箱邮件上限 (MB)
+          <input name="smtp_limit_mb" type="number" min="1" step="0.1">
+        </label>
+      </div>
+      <p class="note">请先在 Amazon「管理内容和设备 → 偏好设置 → 个人文档设置」中，把发件邮箱加入<b>已认可的发件人列表</b>，否则 Kindle 不会收到文件。</p>
+      <div class="actions">
+        <button type="submit" class="primary">保存设置</button>
+        <button type="button" id="test-btn">测试连接</button>
+        <span id="config-msg" class="msg"></span>
+      </div>
+    </form>
+  </details>
+
+  <section class="card">
+    <label id="dropzone" for="file-input">
+      <input id="file-input" type="file" multiple hidden>
+      <strong>拖拽书籍到这里，或点击选择文件</strong>
+      <span id="formats" class="muted"></span>
+    </label>
+
+    <table id="file-table" hidden>
+      <thead><tr><th>文件</th><th>大小</th><th>检查结果</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="actions" id="send-bar" hidden>
+      <label class="check"><input type="checkbox" id="convert-pdf"> PDF 转换为 Kindle 格式（可调字号）</label>
+      <span class="spacer"></span>
+      <button id="clear-btn">清空列表</button>
+      <button id="send-btn" class="primary">发送到 Kindle</button>
+    </div>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
