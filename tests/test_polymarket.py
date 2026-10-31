@@ -214,6 +214,9 @@ def test_polymarket_cycle_end_to_end(settings, store, monkeypatch):
     class StubAnalyst:
         available, provider, model = True, "stub", "stub"
 
+        def budget_status(self):
+            return {"ok": True}
+
     monkeypatch.setattr("arbdesk.service.forecast_markets", lambda analyst, markets: [
         {"market_id": "1", "prob": 0.60, "confidence": 0.8, "rationale": "test"},   # big YES edge
         {"market_id": "2", "prob": 0.31, "confidence": 0.9, "rationale": "test"},   # no edge

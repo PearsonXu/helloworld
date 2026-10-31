@@ -21,6 +21,13 @@ class Venue:
     def __init__(self, cfg: VenueConfig, settings: Settings | None = None):
         self.cfg = cfg
         self.settings = settings
+        # Every active market seen in the last scan (common dict shape + "event_title"),
+        # used by the cross-venue matcher.
+        self.last_markets: list[dict] = []
+
+    def _remember(self, events: list[dict]) -> None:
+        self.last_markets = [{**m, "event_title": e["title"]} for e in events for m in e["markets"]
+                             if m["active"]]
 
     @property
     def label(self) -> str:
@@ -53,7 +60,9 @@ class PolymarketVenue(Venue):
         self.client = client or pm.PolymarketClient()
 
     def scan(self):
-        return pm.scan(self.client, self.cfg)
+        events = self.client.events(self.cfg.max_events)
+        self._remember(events)
+        return pm.scan(self.client, self.cfg, events)
 
     def asks(self, token_id):
         return book_side(self.client.book(token_id), "asks")
@@ -87,7 +96,9 @@ class KalshiVenue(Venue):
         self.client = self.trade_client if same else kalshi.KalshiClient(kalshi.HOSTS["prod"])
 
     def scan(self):
-        return kalshi.scan(self.client, self.cfg)
+        events = self.client.events(self.cfg.max_events)
+        self._remember(events)
+        return kalshi.scan(self.client, self.cfg, events)
 
     def asks(self, token_id):
         ticker, side = kalshi.split_token(token_id)
@@ -116,7 +127,11 @@ class PolymarketUSVenue(Venue):
         self.client = client or pmus.PMUSClient()
 
     def scan(self):
-        return pmus.scan(self.client, self.cfg)
+        raw = self.client.events(self.cfg.max_events)
+        # Titles/rules only (no quotes): enough to match events; prices are fetched per pair.
+        self._remember([{"title": e.get("title", ""), "markets": [pmus.parse_market(m, e) for m in e.get("markets") or []]}
+                        for e in raw])
+        return pmus.scan(self.client, self.cfg, raw)
 
     def asks(self, token_id):
         slug, side = pmus.split_token(token_id)

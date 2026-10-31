@@ -132,8 +132,9 @@ class PMUSClient:
             return None
 
 
-def scan(client: PMUSClient, cfg: VenueConfig) -> tuple[list[dict], list[dict], dict]:
-    raw_events = client.events(cfg.max_events)
+def scan(client: PMUSClient, cfg: VenueConfig,
+         raw_events: list[dict] | None = None) -> tuple[list[dict], list[dict], dict]:
+    raw_events = client.events(cfg.max_events) if raw_events is None else raw_events
     pool = [(m, e) for e in raw_events for m in e.get("markets") or []
             if m.get("active", True) and not m.get("closed") and (_f(m.get("liquidity")) or 0) >= cfg.min_liquidity_usd]
     pool.sort(key=lambda me: -(_f(me[0].get("volume")) or 0))

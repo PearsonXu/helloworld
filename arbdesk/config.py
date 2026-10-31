@@ -21,12 +21,18 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent.parent
 
 LLM_PRESETS = {
-    # Both providers expose an OpenAI-compatible Chat Completions API.
-    "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-chat"},
+    # Both providers expose an OpenAI-compatible Chat Completions API. Defaults are the
+    # cheap "flash" tier; model ids change over time, so verify with
+    # `python -m arbdesk check llm` and override with LLM_MODEL in .env if needed.
+    # Prices are USD per 1M tokens (input, cached input, output) and only feed the
+    # local cost estimate / monthly cap; set exact values under [llm] in config.toml.
+    "deepseek": {"base_url": "https://api.deepseek.com", "model": "deepseek-flash",
+                 "price": (0.30, 0.006, 1.20)},
     # International Model Studio endpoint. Mainland China accounts use
     # https://dashscope.aliyuncs.com/compatible-mode/v1 ; newer workspaces may
     # require a workspace-specific host — override with LLM_BASE_URL.
-    "qwen": {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus"},
+    "qwen": {"base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "model": "qwen-flash",
+             "price": (0.05, 0.005, 0.40)},
 }
 
 
@@ -34,7 +40,8 @@ LLM_PRESETS = {
 class ScanConfig:
     exchanges: list[str] = field(default_factory=lambda: ["binance", "okx", "bybit", "gate", "kucoin"])
     symbols: list[str] = field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT"])
-    times: list[str] = field(default_factory=lambda: ["08:00", "14:00", "20:00"])
+    interval_minutes: int = 5     # code-only scans (no tokens): crypto + prediction markets
+    times: list[str] = field(default_factory=list)  # deprecated, ignored (replaced by intervals)
     taker_fee_pct: float = 0.1
     min_net_spread_pct: float = 0.2
     min_funding_apr_pct: float = 10.0
@@ -57,8 +64,31 @@ class RiskConfig:
 @dataclass
 class LLMConfig:
     enabled: bool = True
-    max_calls_per_day: int = 10
+    interval_minutes: int = 60          # AI runs at most this often, and only when something changed
+    daily_token_budget: int = 300_000   # input + output tokens per UTC day
+    monthly_usd_cap: float = 5.0        # estimated spend per calendar month (from the prices below)
+    max_calls_per_day: int = 200        # extra hard stop
     temperature: float = 0.2
+    # USD per 1M tokens; 0 = use the provider preset
+    price_input: float = 0.0
+    price_cached_input: float = 0.0
+    price_output: float = 0.0
+    # Re-forecast a market only if its price moved this much, or this many hours passed.
+    reforecast_price_move: float = 0.05
+    reforecast_hours: float = 24.0
+
+
+@dataclass
+class CrossVenueConfig:
+    """Same event on two venues: YES on one + NO on the other for < $1 total."""
+    enabled: bool = True
+    venues: list[str] = field(default_factory=lambda: ["kalshi", "polymarket_us"])
+    min_similarity: float = 0.35        # title-token similarity for the code pre-filter
+    max_end_date_diff_days: float = 3.0
+    max_new_pairs_per_run: int = 15     # pairs sent to the AI for matching per AI run
+    min_match_confidence: float = 0.8
+    min_profit_pct: float = 1.0         # extra margin: two venues' rules can differ
+    max_usd_per_pair: float = 20
 
 
 @dataclass
@@ -113,6 +143,7 @@ class Settings:
     polymarket: PolymarketConfig
     secrets: Secrets
     data_dir: Path
+    crossvenue: CrossVenueConfig = field(default_factory=CrossVenueConfig)
     kalshi: VenueConfig = field(default_factory=lambda: VenueConfig(**KALSHI_DEFAULTS))
     polymarket_us: VenueConfig = field(default_factory=lambda: VenueConfig(**PMUS_DEFAULTS))
 
@@ -200,6 +231,7 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         polymarket=PolymarketConfig(**raw.get("polymarket", {})),
         secrets=_load_secrets(env_path, vault_data),
         data_dir=data_dir,
+        crossvenue=CrossVenueConfig(**raw.get("crossvenue", {})),
         kalshi=VenueConfig(**{**KALSHI_DEFAULTS, **raw.get("kalshi", {})}),
         polymarket_us=VenueConfig(**{**PMUS_DEFAULTS, **raw.get("polymarket_us", {})}),
     )

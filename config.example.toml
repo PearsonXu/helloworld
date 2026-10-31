@@ -6,7 +6,7 @@
 # exchanges = ["coinbase", "kraken", "gemini", "binanceus"]
 exchanges = ["binance", "okx", "bybit", "gate", "kucoin"]   # ccxt ids
 symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT"]
-times = ["08:00", "14:00", "20:00"]      # local time, daily
+interval_minutes = 5           # code-only scans (no AI tokens): crypto + prediction markets
 taker_fee_pct = 0.1                      # per fill
 min_net_spread_pct = 0.2                 # cross-exchange, after fees
 min_funding_apr_pct = 10.0
@@ -25,8 +25,29 @@ allowed_symbols = []           # empty = same as scan.symbols
 
 [llm]
 enabled = true
-max_calls_per_day = 10
+interval_minutes = 60          # AI runs at most hourly, and only when something changed
+daily_token_budget = 300000    # input + output tokens per UTC day; AI pauses when reached
+monthly_usd_cap = 5.0          # estimated monthly spend cap (uses the prices below)
+max_calls_per_day = 200
 temperature = 0.2
+# USD per 1M tokens for the cost estimate; 0 = provider preset
+# (deepseek-flash 0.30 / 0.006 cached / 1.20; qwen-flash 0.05 / 0.005 / 0.40).
+# Check your provider's pricing page and put the exact numbers here.
+price_input = 0
+price_cached_input = 0
+price_output = 0
+reforecast_price_move = 0.05   # re-forecast a market only after a 5-point move...
+reforecast_hours = 24          # ...or once a day
+
+[crossvenue]                   # same event on Kalshi and Polymarket US
+enabled = true
+venues = ["kalshi", "polymarket_us"]
+min_similarity = 0.35          # code pre-filter on title words (no tokens)
+max_end_date_diff_days = 3
+max_new_pairs_per_run = 15     # new pairs the AI judges per hourly run (each judged once, cached)
+min_match_confidence = 0.8
+min_profit_pct = 1.0           # extra margin: two venues' rules can differ
+max_usd_per_pair = 20
 
 [panel]
 host = "127.0.0.1"             # loopback only; enforced

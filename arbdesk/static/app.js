@@ -37,10 +37,14 @@ async function refresh() {
   const s = await api("/api/state");
   $("mode").textContent = s.mode === "live" ? "加密货币 实盘 LIVE" : "加密货币 模拟";
   $("mode").className = "pill " + s.mode;
-  $("llm").textContent = s.llm.configured
-    ? `AI ${s.llm.provider}/${s.llm.model} · 今日 ${s.llm.calls_today}/${s.llm.max_calls_per_day}`
+  const L = s.llm;
+  $("llm").textContent = L.configured
+    ? `AI ${L.model} · 今日 ${(L.tokens_today / 1000).toFixed(1)}k/${(L.daily_token_budget / 1000).toFixed(0)}k token · 本月 $${num(L.month_usd, 3)}/$${num(L.monthly_usd_cap)}` +
+      (L.ok ? "" : ` · 已暂停：${L.reason}`)
     : "AI 未配置";
-  $("times").textContent = "定时 " + s.scan_times.join(" / ");
+  $("llm").className = "pill" + (L.configured && !L.ok ? " live" : "");
+  $("llm").title = (L.by_purpose || []).map((p) => `${p.purpose}: ${p.calls} 次, 输入 ${p.input} (缓存 ${p.cached}), 输出 ${p.output}, $${num(p.usd, 4)}`).join("\n");
+  $("times").textContent = `代码扫描每 ${s.intervals.scan_minutes} 分钟 · AI 每 ${s.intervals.ai_minutes} 分钟（有变化才调用）`;
   $("venuePills").innerHTML = Object.values(s.venues).map((v) => {
     const live = v.mode === "live";
     const env = v.environment === "demo" && live ? "（demo 假钱）" : "";
@@ -108,6 +112,7 @@ async function refresh() {
   }).join("") || `<p class="muted">暂无</p>`;
 
   await renderVenues();
+  await renderCross();
 
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
@@ -153,6 +158,25 @@ async function renderVenues() {
         <tbody>${fc}</tbody></table>
     </section>`;
   }).join("");
+}
+
+async function renderCross() {
+  const c = await api("/api/crossvenue");
+  $("crossSection").style.display = c.enabled ? "" : "none";
+  if (!c.enabled) return;
+  const sc = c.scan;
+  $("crossmeta").textContent = sc ? `${sc.ts} · 已确认同一事件 ${sc.summary.matched_pairs ?? 0} 对` : "尚未扫描";
+  $("crossopps").innerHTML = (sc ? sc.opportunities : []).map((o) => `<tr>
+    <td>${esc(o.title)}<br><span class="muted">${esc(o.title_b)}</span></td>
+    <td>${esc(VENUE_LABEL[o.venue_a])} ${esc(o.legs[0].outcome)} + ${esc(VENUE_LABEL[o.venue_b])} ${esc(o.legs[1].outcome)}</td>
+    <td>${num(o.shares, 0)}</td><td>${num(o.cost_usd)}</td><td>${num(o.payout_usd)}</td>
+    <td class="good">$${num(o.profit_usd, 3)} (${esc(o.net_pct)}%)</td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">当前没有扣费后仍有利润的跨平台组合</td></tr>`;
+  $("crosspairs").innerHTML = c.pairs.map((p) => `<tr>
+    <td>${esc(p.title_a)}</td><td>${esc(p.title_b)}</td><td>${num(p.similarity)}</td>
+    <td class="${p.verdict === "same" ? "good" : "muted"}">${p.verdict === "same" ? "同一事件" : "不同"}</td>
+    <td>${num(p.confidence)}</td><td class="muted">${esc(p.reason)}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">暂无（AI 每次只判断少量新候选，结果永久缓存）</td></tr>`;
 }
 
 document.addEventListener("click", async (e) => {

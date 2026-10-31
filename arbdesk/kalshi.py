@@ -248,8 +248,8 @@ class KalshiClient:
         return self.request("POST", "/portfolio/events/orders", body=body, auth=True)
 
 
-def scan(client: KalshiClient, cfg: VenueConfig) -> tuple[list[dict], list[dict], dict]:
-    events = client.events(cfg.max_events)
+def scan(client: KalshiClient, cfg: VenueConfig, events: list[dict] | None = None) -> tuple[list[dict], list[dict], dict]:
+    events = client.events(cfg.max_events) if events is None else events
     opps, errors = [], {}
     screened = [e for e in events if screen(e)]
     for e in screened[:15]:

@@ -88,10 +88,10 @@ class Executor:
                     "errors": ["real-money order: explicit live confirmation required"]}
 
         if legs[0]["exchange"] in risk.PREDICTION_VENUES:
-            v = self.venue(legs[0]["exchange"])
-            if v.cfg.mode == "live":
-                return self._execute_venue_live(proposal_id, legs, v)
-            return self._execute_venue_paper(proposal_id, legs, v)
+            # Legs may span two venues (cross-venue arbitrage); each uses its own venue.
+            if self.venue(legs[0]["exchange"]).cfg.mode == "live":
+                return self._execute_venue_live(proposal_id, legs)
+            return self._execute_venue_paper(proposal_id, legs)
 
         mode = self.settings.risk.mode
         fills, failures = [], []
@@ -115,14 +115,18 @@ class Executor:
             self.halt(f"partial fill on proposal #{proposal_id}")
         return {"ok": not failures, "fills": fills, "errors": failures, "pnl_usd": pnl}
 
-    def _execute_venue_paper(self, proposal_id: int, legs: list[dict], v: Venue) -> dict:
+    def _labels(self, legs: list[dict]) -> str:
+        return " + ".join(dict.fromkeys(self.venue(l["exchange"]).label for l in legs))
+
+    def _execute_venue_paper(self, proposal_id: int, legs: list[dict], v: Venue | None = None) -> dict:
         """All legs are priced against live books first; nothing is recorded
         unless every leg can fill within its limit price."""
         fills, failures = [], []
         for leg in legs:
             try:
-                avg, cost, _ = self._book_check(v, leg)
-                fills.append(self._venue_trade(v, leg, avg, cost))
+                lv = self.venue(leg["exchange"])
+                avg, cost, _ = self._book_check(lv, leg)
+                fills.append(self._venue_trade(lv, leg, avg, cost))
             except Exception as e:
                 failures.append(f"{leg['label'] or leg['token_id']}: {type(e).__name__}: {e}")
         if failures:
@@ -132,7 +136,8 @@ class Executor:
             self.store.add_trade(proposal_id=proposal_id, mode="paper", pnl_usd=None, **f)
         cost = sum(f["cost_usd"] + f["fee_usd"] for f in fills)
         self.store.set_proposal_status(proposal_id, "executed",
-                                       f"paper position opened on {v.label}, cost ${cost:.2f}; settles at resolution")
+                                       f"paper position opened on {self._labels(legs)}, cost ${cost:.2f}; "
+                                       "settles at resolution")
         return {"ok": True, "fills": fills, "errors": [], "pnl_usd": None}
 
     def _book_check(self, v: Venue, leg: dict) -> tuple[float, float, float]:
@@ -165,22 +170,26 @@ class Executor:
                 "raw": json.dumps({"market_id": leg["market_id"], "token_id": leg["token_id"],
                                    "outcome": leg["outcome"], **extra})}
 
-    def _execute_venue_live(self, proposal_id: int, legs: list[dict], v: Venue) -> dict:
+    def _execute_venue_live(self, proposal_id: int, legs: list[dict], v: Venue | None = None) -> dict:
         """Real money. Pre-flight everything, then send FOK orders thinnest-book first.
 
         A multi-leg bundle cannot be atomic. If a later leg fails after earlier ones
         filled, the proposal is marked 'partial' and the kill switch is engaged so a
         human reviews the unhedged position before anything else runs.
         """
-        tol = v.cfg.price_tolerance
+        labels = self._labels(legs)
         try:
-            trader = self.trader(v.name)
-            trader.ensure_allowed()
-            checks = [(leg, *self._book_check(v, leg)) for leg in legs]
-            need = sum(l["shares"] * (l["limit_price"] + tol) for l in legs) * 1.05  # + fee buffer
-            balance = trader.collateral_balance()
-            if balance < need:
-                raise LiveTradingError(f"balance ${balance:.2f} < required ${need:.2f}")
+            checks, need = [], {}
+            for leg in legs:
+                lv = self.venue(leg["exchange"])
+                checks.append((leg, *self._book_check(lv, leg)))
+                need[lv.name] = need.get(lv.name, 0) + leg["shares"] * (leg["limit_price"] + lv.cfg.price_tolerance)
+            for name, amount in need.items():  # every venue must be reachable and funded
+                trader = self.trader(name)
+                trader.ensure_allowed()
+                balance = trader.collateral_balance()
+                if balance < amount * 1.05:  # + fee buffer
+                    raise LiveTradingError(f"{self.venue(name).label} balance ${balance:.2f} < required ${amount * 1.05:.2f}")
         except Exception as e:
             note = f"pre-flight failed, nothing sent: {type(e).__name__}: {e}"
             self.store.set_proposal_status(proposal_id, "failed", note)
@@ -189,29 +198,31 @@ class Executor:
         checks.sort(key=lambda c: c[3] / c[0]["shares"])  # least spare depth first
         fills = []
         for leg, *_ in checks:
+            lv = self.venue(leg["exchange"])
             try:
-                f = trader.buy_fok(leg["token_id"], leg["shares"], leg["limit_price"])
+                f = self.trader(lv.name).buy_fok(leg["token_id"], leg["shares"], leg["limit_price"])
             except Exception as e:
                 err = f"{leg['label'] or leg['token_id']}: {type(e).__name__}: {e}"
                 for done in fills:
                     self.store.add_trade(proposal_id=proposal_id, mode="live", pnl_usd=None, **done)
                 if fills:
                     msg = (f"PARTIAL: {len(fills)}/{len(legs)} legs filled, then {err}. "
-                           f"Review open positions on {v.label}")
+                           f"Review open positions on {labels}")
                     self.store.set_proposal_status(proposal_id, "partial", msg)
-                    self.halt(f"partial fill on proposal #{proposal_id} ({v.label})")
+                    self.halt(f"partial fill on proposal #{proposal_id} ({labels})")
                 else:
                     msg = f"first order not filled, no position taken: {err}"
                     self.store.set_proposal_status(proposal_id, "failed", msg)
                 return {"ok": False, "errors": [msg], "fills": fills}
             leg = {**leg, "shares": f.shares}
-            fills.append(self._venue_trade(v, leg, f.avg_price, f.cost_usd, f.order_id, f.raw))
+            fills.append(self._venue_trade(lv, leg, f.avg_price, f.cost_usd, f.order_id, f.raw))
         for done in fills:
             self.store.add_trade(proposal_id=proposal_id, mode="live", pnl_usd=None, **done)
         cost = sum(f["cost_usd"] for f in fills)
-        claim = " Winnings must be redeemed on polymarket.com after resolution." if v.name == "polymarket" else ""
+        claim = (" Winnings must be redeemed on polymarket.com after resolution."
+                 if any(l["exchange"] == "polymarket" for l in legs) else "")
         self.store.set_proposal_status(
-            proposal_id, "executed", f"LIVE on {v.label}: {len(fills)} order(s) filled, cost ${cost:.2f}.{claim}")
+            proposal_id, "executed", f"LIVE on {labels}: {len(fills)} order(s) filled, cost ${cost:.2f}.{claim}")
         return {"ok": True, "fills": fills, "errors": [], "pnl_usd": None}
 
     def _paper_fill(self, leg: dict) -> dict:

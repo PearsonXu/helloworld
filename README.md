@@ -1,6 +1,6 @@
 # ArbDesk：本地 AI 套利 / 机会扫描面板
 
-ArbDesk 是一个本地运行的 Python 程序。它每天定时扫描几次加密货币市场的套利机会，交给 DeepSeek 或 Qwen 分析并给出建议，最后由你在本地网页面板里**手动批准**才执行。默认是**模拟盘（paper）**。
+ArbDesk 是一个本地运行的 Python 程序。它每 5 分钟用代码扫描加密货币和预测市场（Kalshi、Polymarket US）的套利机会，每小时最多一次、且只在有变化时交给 DeepSeek 或 Qwen 的 flash 模型分析，最后由你在本地网页面板里**手动批准**才执行。默认是**模拟盘（paper）**。
 
 > ⚠️ 本项目不是投资建议。100–200 美元的本金下，手续费、最小下单量和滑点会吃掉大部分理论价差，请先用模拟盘跑至少几周再考虑实盘。
 
@@ -101,6 +101,51 @@ python -m arbdesk venue polymarket_us --no-llm
 
 ---
 
+## 二点六、自动运行：代码每 5 分钟扫描，AI 每小时只看变化
+
+| | 频率 | 花 token 吗 | 做什么 |
+|---|---|---|---|
+| 代码扫描 | 每 5 分钟（`scan.interval_minutes`） | 不花 | 加密货币价差和资金费率、Kalshi 互斥事件 NO 组合、跨平台已确认事件对的实时价格 |
+| AI（flash 模型） | 最多每 60 分钟（`llm.interval_minutes`） | 花，而且有上限 | 只在有变化时调用（见下） |
+
+**AI 只在这些情况下调用：**
+- **加密货币：** 机会列表有变化时分析；没有机会时，一天最多给一次行情观点。
+- **概率评估：** 只评估价格变动超过 5 个百分点、或距上次评估超过 24 小时的市场。
+- **跨平台匹配：** 只判断新出现的候选事件对，每次最多 15 对；判断结果永久缓存，同一对不会重复花 token。
+
+**Token 控制：**
+- 每次调用都会把 API 返回的真实用量（含缓存命中）记到本地数据库。
+- 用到每日 token 预算（默认 30 万）、每月美元上限（默认 $5）或每日调用上限时，AI 自动暂停，代码扫描照常进行。
+- 每次调用都限制了输出长度。
+- 面板顶部显示今日 token 和本月花费，鼠标悬停可以看各用途的明细。
+- `python -m arbdesk check llm` 只发一个约 20 token 的请求，用来确认模型名和 key 是否可用。
+- 默认使用 flash 模型（`deepseek-flash` / `qwen-flash`）。模型名称会变，以 `check llm` 的结果为准，需要的话在 `.env` 里用 `LLM_MODEL=` 指定。
+- `[llm]` 里的价格只用来估算花费和执行月度上限，请按你的供应商价格页填写准确数字。
+
+**其他改动：**
+- **待审批建议去重：** 同一个机会持续存在时，只刷新原来那条建议的价格，不会每次都新增。
+- **AI 打分不重复计数：** Brier 分数里每个市场只计一次（取最后一次评估），反复评估不会让打分失真。
+- **自动清理：** 两天前、而且什么都没扫到的扫描记录会自动删除，数据库不会无限增长。
+
+**跨平台套利（Kalshi ↔ Polymarket US）：**
+- 两个平台上的同一事件，一边买 YES、一边买 NO，合计成本低于 $1 就是锁定利润。
+- 流程分三步：
+  1. 代码按标题词语和到期日粗筛候选（不花 token）；
+  2. AI 判断两个市场是否"在完全相同的情况下结算为 YES"；
+  3. 代码用两边的实时订单簿计价。
+- 风险在第 2 步：两个平台的结算规则可能有细微差别。所以只采用高置信度的"同一事件"判断，要求更高的利润门槛（默认 1%），**批准前请自己对照两边的规则原文。**
+- 资金要分别存在两个平台。
+
+**电脑需要一直开着：**
+- 面板运行时，程序会让 Windows 不进入睡眠（屏幕可以关）。但笔记本合盖仍然会睡眠，需要在电源设置里改成"合盖不做任何操作"。
+- 开机自动启动：按 Win+R，输入 `shell:startup`，在打开的文件夹里新建快捷方式，目标填：
+  ```
+  powershell.exe -NoExit -ExecutionPolicy Bypass -File "C:\Users\你的用户名\arbdesk\scripts\start_arbdesk.ps1"
+  ```
+  登录后会弹出窗口让你输入主密码。主密码不会保存在任何地方，所以每次启动都需要手动输入。
+
+---
+
 ## 三、安全设计
 
 ### 1. 加密保险库（`data/vault.json`）
@@ -140,7 +185,7 @@ python -m arbdesk vault set LLM_API_KEY       # 输入时不回显
 python -m arbdesk vault list                  # 只显示名字，不显示值
 #（已经有 .env 的话：python -m arbdesk vault import-env，然后删掉 .env 里的密钥行）
 
-python -m arbdesk panel        # 启动面板 + 定时器（会先问主密码）
+python -m arbdesk panel        # 启动面板 + 自动扫描（会先问主密码；Windows 可用 scripts\start_arbdesk.ps1）
 python -m arbdesk scan         # 手动跑一次扫描 + AI 分析
 python -m arbdesk proposals    # 列出建议
 python -m arbdesk approve 3    # 命令行批准（模拟）
@@ -180,7 +225,9 @@ arbdesk/
   kalshi.py    Kalshi：数据、互斥事件 NO 组合套利、签名、FOK 下单
   pmus.py      Polymarket US：数据、AI 候选、FOK 下单（官方 SDK）
   venues.py    三个预测市场的统一接口
-  service.py   扫描 → 分析 → 生成建议；每日定时
+  crossvenue.py  跨平台同一事件匹配（代码粗筛 + AI 判断 + 缓存）与计价
+scripts/start_arbdesk.ps1  Windows 启动脚本（可放进开机启动）
+  service.py   代码扫描（每 5 分钟）+ AI（每小时、有变化才调用）→ 生成建议
   storage.py   本地 SQLite
   web.py + static/  本地面板
 tests/         单元测试：pytest

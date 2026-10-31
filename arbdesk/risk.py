@@ -21,11 +21,21 @@ def validate(payload: dict, settings: Settings, store: Store) -> tuple[list[dict
 
     names = [str(l.get("exchange", "")).lower() if isinstance(l, dict) else "" for l in legs_in]
     if any(n in PREDICTION_VENUES for n in names):
-        if len(set(names)) != 1:
-            return [], ["all legs must be on the same prediction venue (no mixing with exchanges)"]
-        legs, errors = _validate_prediction(legs_in, names[0], settings)
-        if settings.venue_cfg(names[0]).mode == "live" and legs:
-            errors += _live_prediction_checks(legs, names[0], settings, store)
+        if not all(n in PREDICTION_VENUES for n in names):
+            return [], ["cannot mix prediction-market legs with exchange legs"]
+        venues = list(dict.fromkeys(names))  # cross-venue proposals span two venues
+        if len({settings.venue_cfg(v).mode for v in venues}) > 1:
+            return [], [f"venues {venues} are in different modes (paper/live); set them the same"]
+        if len(legs_in) > MAX_PREDICTION_LEGS:
+            errors.append(f"too many legs (max {MAX_PREDICTION_LEGS})")
+        legs = []
+        for v in venues:
+            group = [l for l, n in zip(legs_in[:MAX_PREDICTION_LEGS], names) if n == v]
+            vlegs, verrs = _validate_prediction(group, v, settings)
+            legs += vlegs
+            errors += verrs
+            if settings.venue_cfg(v).mode == "live" and vlegs:
+                errors += _live_prediction_checks(vlegs, v, settings, store)
     else:
         legs = _validate_exchange_legs(legs_in, settings, errors)
 
@@ -75,10 +85,8 @@ def _validate_prediction(legs_in: list[dict], venue: str, settings: Settings) ->
     errors: list[str] = []
     if not cfg.enabled:
         return [], [f"{venue} is disabled in config.toml"]
-    if len(legs_in) > MAX_PREDICTION_LEGS:
-        errors.append(f"too many legs (max {MAX_PREDICTION_LEGS})")
     legs = []
-    for i, leg in enumerate(legs_in[:MAX_PREDICTION_LEGS]):
+    for i, leg in enumerate(legs_in):
         try:
             norm = {
                 "exchange": venue,

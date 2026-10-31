@@ -29,6 +29,19 @@ IMPORTABLE_PREFIXES = ("LLM_API_KEY", "EXCHANGE_", "POLYMARKET_", "KALSHI_")
 VENUES = ("polymarket", "kalshi", "polymarket_us")
 
 
+def keep_awake() -> None:
+    """Windows: ask the OS not to sleep while the panel runs (the display may still turn off).
+    Released automatically when the process exits. Closing a laptop lid can still sleep it."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+    except Exception as e:  # never block startup on this
+        log.warning("could not disable sleep: %s", e)
+
+
 def ask_password(prompt: str = "Vault master password: ") -> str:
     if not sys.stdin.isatty():
         raise SystemExit("the vault password must be typed interactively")
@@ -110,8 +123,8 @@ def main() -> None:
     h = sub.add_parser("halt", help="kill switch: block all live trading")
     h.add_argument("reason", nargs="?", default="manual halt")
     sub.add_parser("resume", help="lift the kill switch")
-    ck = sub.add_parser("check", help="check live readiness of a venue without trading")
-    ck.add_argument("name", choices=VENUES)
+    ck = sub.add_parser("check", help="check a venue's live readiness (no trading), or the AI model")
+    ck.add_argument("name", choices=VENUES + ("llm",))
     sub.add_parser("pm-check", help="same as: check polymarket")
     args = ap.parse_args()
 
@@ -154,11 +167,16 @@ def main() -> None:
                              "use an SSH tunnel if you need remote access")
         token = load_or_create_token(settings.data_dir)
         if not args.no_scheduler:
+            keep_awake()
             Scheduler(desk).start()
         url = f"http://127.0.0.1:{settings.panel.port}/?token={token}"
         modes = ", ".join(f"{n}={v.cfg.mode}" for n, v in desk.venues.items())
         print(f"\n  ArbDesk panel: {url}\n  (crypto={settings.risk.mode}, {modes}, "
-              f"secrets from {settings.secrets.source})\n")
+              f"secrets from {settings.secrets.source})\n"
+              f"  scans every {settings.scan.interval_minutes} min, AI at most every "
+              f"{settings.llm.interval_minutes} min ({desk.analyst.model}); "
+              f"budget {settings.llm.daily_token_budget} tokens/day, ${settings.llm.monthly_usd_cap}/month\n"
+              f"  keep this window open; the computer must not sleep\n")
         import uvicorn
         uvicorn.run(create_app(settings, store, desk, executor, token),
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
@@ -189,6 +207,10 @@ def main() -> None:
     elif args.cmd in ("check", "pm-check"):
         name = getattr(args, "name", "polymarket")
         try:
+            if name == "llm":
+                print(json.dumps({**desk.analyst.ping(), "budget": desk.analyst.budget_status()},
+                                 ensure_ascii=False, indent=2))
+                return
             print(json.dumps(executor.trader(name).readiness(), indent=2, default=str))
         except Exception as e:
             raise SystemExit(f"not ready: {type(e).__name__}: {e}")

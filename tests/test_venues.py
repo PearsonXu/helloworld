@@ -281,10 +281,16 @@ def test_pmus_live_no_rejected_by_risk(settings, store):
     assert risk.validate({"legs": [leg]}, settings, store)[1] == []
 
 
-def test_cannot_mix_venues(settings, store):
-    legs = [{"exchange": "kalshi", "market_id": "A", "token_id": "A|no", "outcome": "NO", "shares": 1, "limit_price": 0.5},
-            {"exchange": "polymarket_us", "market_id": "m", "token_id": "m|yes", "outcome": "YES", "shares": 1, "limit_price": 0.5}]
-    assert risk.validate({"legs": legs}, settings, store)[1]
+def test_cross_venue_mixing_rules(settings, store):
+    k = {"exchange": "kalshi", "market_id": "A", "token_id": "A|no", "outcome": "NO", "shares": 1, "limit_price": 0.5}
+    u = {"exchange": "polymarket_us", "market_id": "m", "token_id": "m|yes", "outcome": "YES", "shares": 1, "limit_price": 0.5}
+    legs, errors = risk.validate({"legs": [k, u]}, settings, store)
+    assert errors == [] and {l["exchange"] for l in legs} == {"kalshi", "polymarket_us"}
+    settings.kalshi.mode = "live"           # one live, one paper -> refused
+    assert any("different modes" in e for e in risk.validate({"legs": [k, u]}, settings, store)[1])
+    settings.kalshi.mode = "paper"
+    crypto = {"exchange": "okx", "symbol": "BTC/USDT", "side": "buy", "usd": 5}
+    assert risk.validate({"legs": [k, crypto]}, settings, store)[1]
 
 
 def test_vault_only_venue_keys(tmp_path):

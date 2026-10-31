@@ -79,6 +79,14 @@
       <tbody id="opps"></tbody></table>
   </section>
   <div id="venues" style="display:grid;gap:16px"></div>
+  <section id="crossSection">
+    <h2>跨平台套利 <span class="muted">（Kalshi ↔ Polymarket US，同一事件一边买 YES 一边买 NO）</span> <span class="muted" id="crossmeta"></span></h2>
+    <table><thead><tr><th>事件</th><th>组合</th><th>份数</th><th>成本$</th><th>兑付$</th><th>利润</th></tr></thead>
+      <tbody id="crossopps"></tbody></table>
+    <h3 style="font-size:14px;margin:14px 0 6px">AI 事件匹配记录（每对只判断一次，永久缓存）</h3>
+    <table><thead><tr><th>Kalshi</th><th>Polymarket US</th><th>标题相似度</th><th>AI 判断</th><th>置信度</th><th>理由</th></tr></thead>
+      <tbody id="crosspairs"></tbody></table>
+  </section>
   <section>
     <h2>成交记录（仅保存在本地 SQLite）</h2>
     <table><thead><tr><th>时间</th><th>模式</th><th>交易所</th><th>标的</th><th>方向</th><th>数量</th><th>价格</th><th>金额$</th><th>手续费$</th><th>PnL$</th></tr></thead>

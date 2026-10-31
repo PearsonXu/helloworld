@@ -85,12 +85,14 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
         return {
             "mode": settings.risk.mode,
             "risk": settings.risk.__dict__,
-            "scan_times": settings.scan.times,
+            "intervals": {"scan_minutes": settings.scan.interval_minutes,
+                          "ai_minutes": settings.llm.interval_minutes},
+            "last_run": desk.last_run,
             "exchanges": settings.scan.exchanges,
             "keyed_exchanges": sorted(settings.secrets.exchange_keys),  # names only
             "llm": {"configured": desk.analyst.available, "provider": desk.analyst.provider,
-                    "model": desk.analyst.model, "calls_today": store.llm_calls_today(),
-                    "max_calls_per_day": settings.llm.max_calls_per_day},
+                    "model": desk.analyst.model, **desk.analyst.budget_status(),
+                    "by_purpose": store.usage_by_purpose(1)},
             "today": store.today_stats(),
             "running": desk.running,
             "venues": {n: {"label": v.label, "mode": v.cfg.mode, "environment": v.cfg.environment}
@@ -112,6 +114,12 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
                         "scan": latest[0] if latest else None,
                         "forecasts": store.forecasts(30, venue=name), "scores": store.forecast_scores(name)})
         return out
+
+    @app.get("/api/crossvenue", dependencies=[Depends(auth)])
+    def cross():
+        latest = store.scans(1, source="crossvenue")
+        return {"enabled": settings.crossvenue.enabled, "venues": settings.crossvenue.venues,
+                "scan": latest[0] if latest else None, "pairs": store.pair_matches(40)}
 
     @app.get("/api/analyses", dependencies=[Depends(auth)])
     def analyses(limit: int = 10):

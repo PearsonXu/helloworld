@@ -295,9 +295,10 @@ def resolution(raw_market: dict) -> dict | None:
     return {"yes": 1 if prices[0] > prices[1] else 0}
 
 
-def scan(client: PolymarketClient, cfg: PolymarketConfig) -> tuple[list[dict], list[dict], dict]:
+def scan(client: PolymarketClient, cfg: PolymarketConfig,
+         events: list[dict] | None = None) -> tuple[list[dict], list[dict], dict]:
     """Returns (arbitrage opportunities, forecast candidates, summary)."""
-    events = client.events(cfg.max_events)
+    events = client.events(cfg.max_events) if events is None else events
     opps, errors = [], {}
     screened = [(e, s) for e in events if (s := screen_negrisk(e))]
     for e, s in screened[:15]:
