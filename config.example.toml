@@ -120,6 +120,8 @@ currencies = ["BTC", "ETH"]
 venues = ["kalshi", "polymarket_us"]
 kalshi_series = ["KXBTCD", "KXBTC", "KXETHD", "KXETH"]   # Kalshi crypto series to scan
 max_price = 0.15               # only sides costing <= 15 cents ("lottery tickets")
+min_hours_to_expiry = 24       # skip intraday / same-day contracts (index & timing mismatch dominate)
+min_distance_pct = 5           # strike(s) at least 5% away from the current price: real tails only
 min_edge = 0.02                # option-implied probability - price - fee
 min_ratio = 1.5                # option-implied probability / price
 max_expiry_gap_days = 45       # contract date must be near a listed option expiry

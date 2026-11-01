@@ -139,6 +139,7 @@ class DipManager:
                 continue
             try:
                 anchor = self.market.price(sym)
+                self.store.add_sample(f"dip_price:{sym}", anchor)
             except Exception as e:
                 errors.append(f"{sym}: price unavailable ({type(e).__name__})")
                 continue

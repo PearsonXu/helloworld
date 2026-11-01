@@ -12,6 +12,7 @@ inside a small quarterly budget enforced by the risk module.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -140,6 +141,15 @@ def evaluate(contracts: list[Contract], smiles_by_ccy: dict, cfg, fee_rate: dict
     for c in contracts:
         smiles = smiles_by_ccy.get(c.currency)
         if not smiles:
+            continue
+        # Only genuine tails: far enough out in time and far from the current price. Near expiry
+        # or near the money, the settlement index (CF Benchmarks vs Deribit), the exact settlement
+        # minute and stale quotes dominate, and option chains can't price intraday moves well.
+        if (c.expiry - now).total_seconds() < cfg.min_hours_to_expiry * 3600:
+            continue
+        spot = smiles[0].forward
+        strikes = [k for k in (c.lo, c.hi) if k]
+        if not strikes or min(abs(math.log(k / spot)) for k in strikes) < cfg.min_distance_pct / 100:
             continue
         p_yes = implied_yes(c, smiles, now, cfg.max_expiry_gap_days)
         if p_yes is None:

@@ -139,6 +139,8 @@ class TailConfig:
     venues: list[str] = field(default_factory=lambda: ["kalshi", "polymarket_us"])
     kalshi_series: list[str] = field(default_factory=lambda: ["KXBTCD", "KXBTC", "KXETHD", "KXETH"])
     max_price: float = 0.15            # only "lottery tickets": sides costing <= 15 cents
+    min_hours_to_expiry: float = 24    # skip intraday / same-day contracts
+    min_distance_pct: float = 5.0      # strike(s) at least this far from the current price
     min_edge: float = 0.02             # option-implied prob - price - fee
     min_ratio: float = 1.5             # option-implied prob / price
     max_expiry_gap_days: float = 45    # contract date must sit near listed option expiries

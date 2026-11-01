@@ -161,3 +161,14 @@ def test_tail_cycle_proposal_and_budget(settings):
     desk.tail_cycle()
     note = store.proposal(prop["id"])["note"]
     assert "black-swan budget" in note
+
+
+def test_filters_drop_intraday_and_near_the_money():
+    smiles = {"BTC": [flat_smile(45)]}
+    cs = tail.kalshi_contracts([
+        km("SOON", "less", hi=80000, bid=0.01, ask=0.02, days=0.2),        # 5 hours left
+        km("ATM", "between", lo=99_000, hi=101_000, bid=0.01, ask=0.02),   # around the price
+        km("TAIL", "less", hi=80000, bid=0.01, ask=0.04),                  # 20% away, 29 days
+    ], ["BTC"])
+    ids = {r["market_id"] for r in tail.evaluate(cs, smiles, TailConfig(), {"kalshi": 0.07}, NOW)}
+    assert ids == {"TAIL"}
