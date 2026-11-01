@@ -86,6 +86,7 @@ class DipManager:
         self.store = store
         self._market = market            # public data
         self._trade_market = trade_market  # authenticated (live only)
+        self.sim_available = None          # set while a simulated-account session runs
 
     @property
     def cfg(self):
@@ -149,6 +150,11 @@ class DipManager:
             if (errs := self._budget_errors(sum(p["usd"] for p in plan), replacing_usd=existing)):
                 errors += [f"{sym}: {e}" for e in errs]
                 continue
+            if c.mode == "paper" and self.sim_available is not None:
+                avail = self.sim_available()  # resting orders lock cash, like on an exchange
+                if avail is not None and avail + existing < sum(p["usd"] for p in plan):
+                    errors.append(f"{sym}: 模拟账户可用资金不足（可用 ${avail + existing:.2f}）")
+                    continue
             if c.mode == "live":
                 lim = self.trade_market.limits(sym)
                 small = [p for p in plan if p["amount"] < lim["min_amount"] or p["usd"] < lim["min_cost"]]

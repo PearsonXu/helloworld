@@ -19,6 +19,8 @@ from datetime import datetime, timedelta, timezone
 from . import crossvenue, risk, tail
 from .alerts import AlertMonitor
 from .dip import DipManager
+from .executor import Executor
+from .sim import SimAccount
 from .deribit import DeribitClient, build_smiles
 from .config import Settings
 from .llm import Analyst, BudgetExceeded, forecast_markets
@@ -48,6 +50,11 @@ class Desk:
         self.last_smiles: dict = {}
         self.alerts = AlertMonitor(settings, store)
         self.dip = DipManager(settings, store)
+        self.executor = Executor(settings, store)
+        self.sim = SimAccount(settings, store, self)
+        # While a simulation runs, paper execution and dip arming are limited to its available cash.
+        self.executor.sim_available = self.sim.available
+        self.dip.sim_available = self.sim.available
 
     # ------------------------------------------------------------------
     def run_cycle(self, use_llm: bool = True) -> dict:
@@ -74,6 +81,11 @@ class Desk:
                     result["dip"] = self.dip.cycle()
                 except Exception as e:
                     log.warning("dip ladder cycle failed: %s", e)
+            if self.sim.current():
+                try:
+                    result["sim"] = self.sim_step()
+                except Exception as e:
+                    log.warning("simulation step failed: %s", e)
             if self.settings.alerts.enabled:
                 ok, failed = self._source_health(summary, result)
                 try:
@@ -89,6 +101,34 @@ class Desk:
         finally:
             self.running = False
             self._lock.release()
+
+    def sim_step(self) -> dict:
+        """Auto-execute this session's passing paper proposals, then mark the account."""
+        s = self.sim.current()
+        executed, refused = [], []
+        if self.settings.sim.auto_execute:
+            for p in sorted(self.store.proposals(200), key=lambda p: p["id"]):
+                if p["status"] != "pending" or p["note"] or not self.sim.is_session_proposal(s, p):
+                    continue  # old, or already known to fail the risk checks
+                legs = p["payload"].get("legs") or []
+                if not legs or self._is_live_payload(legs):
+                    continue  # real money is never executed automatically
+                key = p.get("dedupe_key")
+                if key and self.store.proposal_executed_since(key, s["start_ts"]):
+                    continue  # one position per opportunity per session
+                r = self.executor.execute(p["id"])
+                (executed if r.get("ok") else refused).append(p["id"])
+        snap = self.sim.tick()
+        return {"executed": executed, "refused": refused,
+                "equity": round(snap["equity"], 2) if snap else None,
+                "finished": bool(snap and snap.get("status") == "finished")}
+
+    def _is_live_payload(self, legs: list[dict]) -> bool:
+        ex = str(legs[0].get("exchange", "")).lower()
+        if ex in risk.PREDICTION_VENUES:
+            return any(self.settings.venue_cfg(str(l.get("exchange")).lower()).mode == "live" for l in legs
+                       if str(l.get("exchange")).lower() in risk.PREDICTION_VENUES)
+        return self.settings.risk.mode == "live"
 
     def _source_health(self, crypto_summary: dict, result: dict) -> tuple[set[str], set[str]]:
         """Which data sources worked in this cycle (for outage alerts)."""

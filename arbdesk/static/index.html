@@ -60,6 +60,18 @@
       <button class="ghost" id="ackAll">全部已读</button></div>
     <div id="alertList" style="margin-top:8px"></div>
   </section>
+  <section id="simSection">
+    <div class="row"><h2 style="margin:0">模拟账户 <span class="muted" id="simmeta"></span></h2><span style="flex:1"></span>
+      <button id="simStart">开始模拟</button> <button class="danger" id="simStop">提前结束</button></div>
+    <div class="stats" id="simstats" style="margin-top:10px"></div>
+    <p class="muted" id="simline"></p>
+    <h3 style="font-size:14px;margin:14px 0 6px">各策略</h3>
+    <table><thead><tr><th>策略</th><th>成交笔数</th><th>投入$</th><th>已实现$</th><th>浮动$</th><th>手续费$</th></tr></thead>
+      <tbody id="simstrats"></tbody></table>
+    <h3 style="font-size:14px;margin:14px 0 6px">持仓（按现在能卖出的价格估值）</h3>
+    <table><thead><tr><th>平台</th><th>持仓</th><th>数量</th><th>成本$</th><th>现价</th><th>市值$</th><th>浮动$</th></tr></thead>
+      <tbody id="simpos"></tbody></table>
+  </section>
   <section id="haltBanner" style="display:none;border-color:var(--bad)">
     <h2 class="bad">实盘已停止</h2><p id="haltReason"></p>
     <button id="resume" class="ghost">确认已检查，恢复实盘</button>

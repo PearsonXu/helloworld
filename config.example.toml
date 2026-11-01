@@ -174,3 +174,12 @@ usd_per_level = 5
 symbol = "ETH/USD"
 levels_pct = [-30, -45, -60]
 usd_per_level = 5
+
+# ---------------------------------------------------------------------------
+# Simulated account: `python -m arbdesk sim start --capital 150 --hours 24`, or the panel button.
+# During a session, paper proposals that pass the risk checks are executed automatically
+# (live never is), against the session's cash; resting dip orders reserve cash.
+[sim]
+capital = 150
+hours = 24
+auto_execute = true

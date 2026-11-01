@@ -101,6 +101,15 @@ CREATE TABLE IF NOT EXISTS dip_orders (
     fill_price REAL,
     updated_ts TEXT
 );
+CREATE TABLE IF NOT EXISTS sim_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    start_ts TEXT NOT NULL,
+    end_ts TEXT NOT NULL,
+    capital REAL NOT NULL,
+    status TEXT NOT NULL,           -- running / finished
+    finished_ts TEXT,
+    report TEXT                     -- JSON snapshot at the end
+);
 CREATE TABLE IF NOT EXISTS flags (
     name TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -283,7 +292,7 @@ class Store:
     def prune_samples(self, keep_days: float = 3.0) -> None:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat(timespec="seconds")
         with self.lock, self.conn:
-            self.conn.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+            self.conn.execute("DELETE FROM samples WHERE ts < ? AND key NOT LIKE 'sim_equity:%'", (cutoff,))
 
     # alerts ---------------------------------------------------------------
     LEVELS = {"info": 0, "warning": 1, "critical": 2}
@@ -342,6 +351,54 @@ class Store:
     def latest_sample(self, key: str) -> float | None:
         rows = self._rows("SELECT value FROM samples WHERE key = ? ORDER BY id DESC LIMIT 1", (key,))
         return rows[0]["value"] if rows else None
+
+    # simulated account ------------------------------------------------------
+    def add_sim(self, start_ts: str, end_ts: str, capital: float) -> int:
+        return self._insert("INSERT INTO sim_sessions (start_ts, end_ts, capital, status) VALUES (?, ?, ?, 'running')",
+                            (start_ts, end_ts, capital))
+
+    def sim(self, sid: int) -> dict | None:
+        rows = self._rows("SELECT * FROM sim_sessions WHERE id = ?", (sid,))
+        return rows[0] if rows else None
+
+    def sim_running(self) -> dict | None:
+        rows = self._rows("SELECT * FROM sim_sessions WHERE status = 'running' ORDER BY id DESC LIMIT 1")
+        return rows[0] if rows else None
+
+    def sims(self, limit: int = 20) -> list[dict]:
+        return self._rows("SELECT id, start_ts, end_ts, finished_ts, capital, status FROM sim_sessions "
+                          "ORDER BY id DESC LIMIT ?", (limit,))
+
+    def finish_sim(self, sid: int, ts: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE sim_sessions SET status = 'finished', finished_ts = ? WHERE id = ?", (ts, sid))
+
+    def set_sim_report(self, sid: int, report: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE sim_sessions SET report = ? WHERE id = ?", (report, sid))
+
+    def trades_between(self, start_ts: str, end_ts: str, mode: str = "paper") -> list[dict]:
+        """Trades in a window, with the originating proposal's kind and dedupe key (for attribution)."""
+        return self._rows(
+            "SELECT t.*, p.dedupe_key AS dedupe_key, json_extract(p.payload, '$.kind') AS proposal_kind "
+            "FROM trades t LEFT JOIN proposals p ON p.id = t.proposal_id "
+            "WHERE t.mode = ? AND t.ts >= ? AND t.ts <= ? ORDER BY t.id", (mode, start_ts, end_ts))
+
+    def usage_between(self, start_ts: str, end_ts: str) -> dict:
+        r = self._rows("SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens, "
+                       "COALESCE(SUM(cost_usd), 0) AS usd FROM llm_usage WHERE ts >= ? AND ts <= ?",
+                       (start_ts, end_ts))[0]
+        return {"tokens": r["tokens"], "usd": r["usd"]}
+
+    def samples(self, key: str, limit: int = 2000) -> list[dict]:
+        return self._rows("SELECT ts, value FROM samples WHERE key = ? ORDER BY id LIMIT ?", (key, limit))
+
+    def max_proposal_id(self) -> int:
+        return self._rows("SELECT COALESCE(MAX(id), 0) AS m FROM proposals")[0]["m"]
+
+    def proposal_executed_since(self, dedupe_key: str, since_ts: str) -> bool:
+        return bool(self._rows("SELECT 1 FROM proposals WHERE dedupe_key = ? AND status IN ('executed', 'partial') "
+                               "AND ts >= ? LIMIT 1", (dedupe_key, since_ts)))
 
     # maintenance --------------------------------------------------------
     def prune_scans(self, keep_days: float = 2.0) -> int:

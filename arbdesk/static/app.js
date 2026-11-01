@@ -116,6 +116,7 @@ async function refresh() {
   await renderTail();
   await renderAlerts();
   await renderDip();
+  await renderSim();
 
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
@@ -161,6 +162,47 @@ async function renderVenues() {
         <tbody>${fc}</tbody></table>
     </section>`;
   }).join("");
+}
+
+async function renderSim() {
+  const d = await api("/api/sim");
+  const r = d.snapshot;
+  $("simStart").style.display = d.running ? "none" : "";
+  $("simStop").style.display = d.running ? "" : "none";
+  if (!r) {
+    $("simmeta").textContent = "尚未开始";
+    $("simstats").innerHTML = "";
+    $("simline").textContent = `点"开始模拟"：默认 $${d.defaults.capital}、${d.defaults.hours} 小时。模拟期间通过风控的模拟盘建议会自动执行（实盘永远不会自动执行）。`;
+    $("simstrats").innerHTML = ""; $("simpos").innerHTML = "";
+    return;
+  }
+  const end = new Date(r.finished_ts || r.end_ts);
+  const left = Math.max(0, end - new Date());
+  const hh = Math.floor(left / 3600000), mm = Math.floor((left % 3600000) / 60000);
+  $("simmeta").textContent = d.running
+    ? `#${r.id} 进行中 · 剩余 ${hh} 小时 ${mm} 分`
+    : `#${r.id} 已结束 · ${(r.finished_ts || "").slice(0, 16)} UTC`;
+  const cls = (v) => (v >= 0 ? "good" : "bad");
+  $("simstats").innerHTML = `
+    <div class="stat"><b>$${num(r.capital)} → <span class="${cls(r.pnl)}">$${num(r.equity)}</span></b><span>初始资金 → 账户总值</span></div>
+    <div class="stat"><b class="${cls(r.pnl)}">${r.return_pct >= 0 ? "+" : ""}${num(r.return_pct)}%</b><span>收益率</span></div>
+    <div class="stat"><b>$${num(r.cash)}</b><span>现金（其中挂单冻结 $${num(r.reserved)}）</span></div>
+    <div class="stat"><b>$${num(r.positions_value)}</b><span>持仓市值</span></div>
+    <div class="stat"><b class="${cls(r.net_after_ai)}">${r.net_after_ai >= 0 ? "+" : ""}${num(r.net_after_ai)}</b><span>扣除 AI 花费后净盈亏</span></div>`;
+  const pts = d.curve.map((c) => c.value);
+  $("simline").textContent = `已实现 ${num(r.realized)} · 浮动 ${num(r.unrealized)} · 手续费 ${num(r.fees)} · AI 花费 $${num(r.ai_cost_usd, 4)}（${r.ai_tokens} token）` +
+    (pts.length ? ` · 期间最高 $${num(Math.max(...pts))} / 最低 $${num(Math.min(...pts))}` : "") +
+    (r.unpriced_positions ? ` · ${r.unpriced_positions} 个持仓暂无报价，按成本估值` : "") +
+    (r.reason ? ` · 结束原因：${r.reason}` : "");
+  $("simstrats").innerHTML = r.by_strategy.map((b) => `<tr><td>${esc(b.label)}</td><td>${b.trades}</td>
+    <td>${num(b.spent)}</td><td class="${cls(b.realized)}">${num(b.realized)}</td>
+    <td class="${cls(b.unrealized || 0)}">${num(b.unrealized || 0)}</td><td>${num(b.fees)}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="muted">还没有成交（很多时候一天内都不会有机会，这本身也是结果）</td></tr>`;
+  $("simpos").innerHTML = r.positions.map((p) => `<tr><td>${esc(VENUE_LABEL[p.venue] || p.venue)}</td>
+    <td>${esc(p.label)}</td><td>${num(p.qty, 4)}</td><td>${num(p.cost)}</td>
+    <td>${p.price == null ? "—" : num(p.price, 4)}</td><td>${num(p.value)}</td>
+    <td class="${cls(p.unrealized)}">${num(p.unrealized)}</td></tr>`).join("")
+    || `<tr><td colspan="7" class="muted">无持仓</td></tr>`;
 }
 
 async function renderDip() {
@@ -259,6 +301,16 @@ document.addEventListener("click", async (e) => {
   refresh();
 });
 $("run").onclick = () => api("/api/run", { use_llm: true }).then(refresh);
+$("simStart").onclick = async () => {
+  const d = await api("/api/sim");
+  const capital = prompt("模拟初始资金（美元）：", d.defaults.capital);
+  if (capital === null) return;
+  const hours = prompt("模拟时长（小时）：", d.defaults.hours);
+  if (hours === null) return;
+  try { await api("/api/sim/start", { capital: Number(capital), hours: Number(hours) }); } catch (e) { alert(e.message); }
+  refresh();
+};
+$("simStop").onclick = () => confirm("提前结束当前模拟并生成报告？") && api("/api/sim/stop", {}).then(refresh);
 $("dipArm").onclick = async () => {
   const live = window.__dip && window.__dip.mode === "live";
   let body = {};

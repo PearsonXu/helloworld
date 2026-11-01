@@ -178,6 +178,33 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
             desk.dip.cancel_all()
         return {"ok": True}
 
+    @app.get("/api/sim", dependencies=[Depends(auth)])
+    def sim_view():
+        cur = desk.sim.current()
+        hist = store.sims(10)
+        if cur:
+            snap = desk.sim.snapshot(cur, record=False)  # sync endpoint: runs in FastAPI's threadpool
+        elif hist:
+            snap = desk.sim.report(hist[0]["id"])
+        else:
+            snap = None
+        curve = store.samples(f"sim_equity:{snap['id']}") if snap else []
+        return {"running": bool(cur), "snapshot": snap, "curve": curve[-300:], "history": hist,
+                "defaults": {"capital": settings.sim.capital, "hours": settings.sim.hours}}
+
+    @app.post("/api/sim/start", dependencies=[Depends(auth), Depends(json_only)])
+    async def sim_start(request: Request):
+        body = await request.json()
+        try:
+            s = desk.sim.start(body.get("capital"), body.get("hours"))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "id": s["id"]}
+
+    @app.post("/api/sim/stop", dependencies=[Depends(auth), Depends(json_only)])
+    async def sim_stop():
+        return {"ok": True, "report": await run_in_threadpool(desk.sim.stop)}
+
     @app.get("/api/dip", dependencies=[Depends(auth)])
     def dip_status():
         return desk.dip.status()

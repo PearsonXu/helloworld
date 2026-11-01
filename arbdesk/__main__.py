@@ -115,6 +115,11 @@ def main() -> None:
     vp.add_argument("name", choices=VENUES)
     vp.add_argument("--no-llm", action="store_true")
     sub.add_parser("tail", help="price crypto threshold contracts against Deribit options once")
+    sm = sub.add_parser("sim", help="simulated account: start [--capital N --hours H] | status | stop | report [ID]")
+    sm.add_argument("action", choices=["start", "status", "stop", "report"])
+    sm.add_argument("id", nargs="?", type=int)
+    sm.add_argument("--capital", type=float)
+    sm.add_argument("--hours", type=float)
     dp = sub.add_parser("dip", help="dip-buy ladder: status | arm [--live] | check | cancel")
     dp.add_argument("action", choices=["status", "arm", "check", "cancel"])
     dp.add_argument("--live", action="store_true", help="confirm arming real-money resting orders")
@@ -160,7 +165,7 @@ def main() -> None:
     setup_logging(settings)
     store = Store(settings.data_dir / "arbdesk.db")
     desk = Desk(settings, store)
-    executor = Executor(settings, store)
+    executor = desk.executor  # shared, so simulated-account limits apply everywhere
 
     if settings.risk.mode == "live":
         log.warning("LIVE exchange mode: API keys must have trading only — "
@@ -193,6 +198,31 @@ def main() -> None:
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
     elif args.cmd == "scan":
         print(json.dumps(desk.run_cycle(use_llm=not args.no_llm), ensure_ascii=False, indent=2))
+    elif args.cmd == "sim":
+        def show(r):
+            if not r:
+                print("no simulation"); return
+            print(f"#{r['id']} {r['status']} · {r['start_ts'][:16]} → {(r.get('finished_ts') or r['end_ts'])[:16]} UTC")
+            print(f"capital ${r['capital']:.2f} → equity ${r['equity']:.2f} ({r['return_pct']:+.2f}%) · "
+                  f"cash ${r['cash']:.2f} (reserved ${r['reserved']:.2f}) · positions ${r['positions_value']:.2f}")
+            print(f"realized {r['realized']:+.2f} · unrealized {r['unrealized']:+.2f} · fees {r['fees']:.2f} · "
+                  f"AI ${r['ai_cost_usd']:.4f} · net after AI {r['net_after_ai']:+.2f}")
+            for b in r["by_strategy"]:
+                print(f"  {b['label']:<10} trades {b['trades']:>3} · spent ${b['spent']:.2f} · "
+                      f"realized {b['realized']:+.2f} · unrealized {b.get('unrealized', 0):+.2f}")
+        if args.action == "start":
+            s_ = desk.sim.start(args.capital, args.hours)
+            print(f"started simulation #{s_['id']}: ${s_['capital']:.2f} until {s_['end_ts']} UTC. "
+                  "Keep `python -m arbdesk panel` running so it trades and records.")
+        elif args.action == "stop":
+            show(desk.sim.stop())
+        elif args.action == "status":
+            cur = desk.sim.current()
+            show(desk.sim.snapshot(cur, record=False) if cur else
+                 (desk.sim.report(store.sims(1)[0]["id"]) if store.sims(1) else None))
+        else:
+            sid = args.id or (store.sims(1)[0]["id"] if store.sims(1) else None)
+            show(desk.sim.report(sid) if sid else None)
     elif args.cmd == "dip":
         if args.action == "arm":
             confirm = False

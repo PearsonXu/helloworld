@@ -42,6 +42,10 @@ class Venue:
     def resolution(self, market_id: str) -> dict | None:
         raise NotImplementedError
 
+    def bid(self, token_id: str) -> float | None:
+        """Best price you could sell `token_id` at right now (for marking positions)."""
+        raise NotImplementedError
+
     def taker_fee(self, price: float, shares: float) -> float:
         return shares * taker_fee_per_share(price, self.cfg.taker_fee_rate)
 
@@ -69,6 +73,10 @@ class PolymarketVenue(Venue):
 
     def resolution(self, market_id):
         return pm.resolution(self.client.market(market_id))
+
+    def bid(self, token_id):
+        bids = book_side(self.client.book(token_id), "bids")
+        return bids[0][0] if bids else None
 
     def has_live_credentials(self):
         return bool(self.settings.secrets.pm_private_key)
@@ -107,6 +115,13 @@ class KalshiVenue(Venue):
     def resolution(self, market_id):
         return kalshi.resolution(self.client.market(market_id))
 
+    def bid(self, token_id):
+        ticker, side = kalshi.split_token(token_id)
+        ob = self.client.orderbook(ticker)
+        ob = ob.get("orderbook_fp") or ob
+        bids = [float(p) for p, _ in ob.get(f"{side}_dollars") or []]  # resting bids for that side
+        return max(bids) if bids else None
+
     def taker_fee(self, price, shares):
         return kalshi.kalshi_fee(price, shares, self.cfg.taker_fee_rate)
 
@@ -139,6 +154,16 @@ class PolymarketUSVenue(Venue):
 
     def resolution(self, market_id):
         return pmus.resolution(self.client.market(market_id), self.client.settlement(market_id))
+
+    def bid(self, token_id):
+        slug, side = pmus.split_token(token_id)
+        book = self.client.book(slug)
+        if side == "yes":  # a YES holder sells into the long bids
+            md = book.get("marketData", book)
+            bids = [b for b in (pmus._px(l.get("px")) for l in md.get("bids") or []) if b]
+            return max(bids) if bids else None
+        offers = pmus.ladders(book)["yes"]  # a NO holder exits by buying back YES at the offer
+        return round(1 - offers[0][0], 6) if offers else None
 
     def has_live_credentials(self):
         s = self.settings.secrets

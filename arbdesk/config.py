@@ -188,6 +188,14 @@ class DipConfig:
     keep_orders_on_auto_halt: bool = True  # an alert-triggered halt keeps resting dip orders (manual halt cancels)
 
 
+@dataclass
+class SimConfig:
+    """Simulated account defaults (override per run: `sim start --capital 200 --hours 24`)."""
+    capital: float = 150.0
+    hours: float = 24.0
+    auto_execute: bool = True      # execute passing paper proposals automatically while a session runs
+
+
 # Venue-specific defaults on top of VenueConfig's.
 KALSHI_DEFAULTS = {"environment": "demo", "min_liquidity_usd": 500}
 PMUS_DEFAULTS = {"min_liquidity_usd": 1000}
@@ -206,6 +214,7 @@ class Settings:
     tail: TailConfig = field(default_factory=TailConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
     dip: DipConfig = field(default_factory=DipConfig)
+    sim: SimConfig = field(default_factory=SimConfig)
     kalshi: VenueConfig = field(default_factory=lambda: VenueConfig(**KALSHI_DEFAULTS))
     polymarket_us: VenueConfig = field(default_factory=lambda: VenueConfig(**PMUS_DEFAULTS))
 
@@ -297,6 +306,7 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         tail=TailConfig(**raw.get("tail", {})),
         alerts=AlertConfig(**raw.get("alerts", {})),
         dip=DipConfig(**raw.get("dip", {})),
+        sim=SimConfig(**raw.get("sim", {})),
         kalshi=VenueConfig(**{**KALSHI_DEFAULTS, **raw.get("kalshi", {})}),
         polymarket_us=VenueConfig(**{**PMUS_DEFAULTS, **raw.get("polymarket_us", {})}),
     )

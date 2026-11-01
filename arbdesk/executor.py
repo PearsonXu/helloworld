@@ -27,6 +27,8 @@ class Executor:
         self._clients: dict[tuple[str, str, bool], ccxt.Exchange] = {}
         self._venues: dict[str, Venue] = {}
         self._traders: dict = {}
+        # Set while a simulated-account session runs: returns available paper cash.
+        self.sim_available = None
 
     def venue(self, name: str) -> Venue:
         if name not in self._venues:
@@ -104,6 +106,9 @@ class Executor:
                 failures.append(f"{leg['exchange']} {leg['symbol']}: {type(e).__name__}: {e}")
                 break  # do not continue a multi-leg trade after a failed leg
 
+        if mode == "paper" and not failures and (short := self._sim_short(fills)):
+            self.store.set_proposal_status(proposal_id, "failed", short)
+            return {"ok": False, "errors": [short]}
         pnl = self._offsetting_pnl(fills) if not failures else None
         for i, f in enumerate(fills):
             self.store.add_trade(proposal_id=proposal_id, mode=mode,
@@ -114,6 +119,19 @@ class Executor:
         if mode == "live" and failures and fills:
             self.halt(f"partial fill on proposal #{proposal_id}")
         return {"ok": not failures, "fills": fills, "errors": failures, "pnl_usd": pnl}
+
+    def _sim_short(self, fills: list[dict]) -> str | None:
+        """Error text if a paper fill set costs more than the simulated account has available."""
+        if self.sim_available is None:
+            return None
+        avail = self.sim_available()
+        if avail is None:
+            return None
+        need = sum((f["cost_usd"] + f["fee_usd"]) if f["side"] == "buy" else -(f["cost_usd"] - f["fee_usd"])
+                   for f in fills)
+        if need > avail + 1e-9:
+            return f"模拟账户可用资金不足：需要 ${need:.2f}，可用 ${avail:.2f}"
+        return None
 
     def _labels(self, legs: list[dict]) -> str:
         return " + ".join(dict.fromkeys(self.venue(l["exchange"]).label for l in legs))
@@ -129,6 +147,8 @@ class Executor:
                 fills.append(self._venue_trade(lv, leg, avg, cost))
             except Exception as e:
                 failures.append(f"{leg['label'] or leg['token_id']}: {type(e).__name__}: {e}")
+        if not failures and (short := self._sim_short(fills)):
+            failures.append(short)
         if failures:
             self.store.set_proposal_status(proposal_id, "failed", "; ".join(failures))
             return {"ok": False, "errors": failures}
