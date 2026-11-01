@@ -257,3 +257,27 @@ def test_scheduler_two_clocks(settings, monkeypatch):
     assert len(calls) == 25                                   # every 5 min for 2 h, plus t=0
     ai = [t for t, use in calls if use]
     assert ai == [0.0, 3600.0, 7200.0]
+
+
+def test_ping_explains_truncated_thinking(settings, store):
+    a = Analyst(settings, store)
+
+    def create(**kw):
+        msg = SimpleNamespace(content="", reasoning_content="let me think..." * 20)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="length")],
+                               usage={"prompt_tokens": 40, "completion_tokens": 300,
+                                      "completion_tokens_details": {"reasoning_tokens": 300}})
+
+    a.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    r = a.ping()
+    assert r["ok"] is False and r["details"]["reasoning_tokens"] == 300 and "thinking" in r["hint"]
+
+    a.client = FakeOpenAI(lambda p: {"ok": True})
+    assert a.ping()["ok"] is True
+
+
+def test_extra_body_is_passed_through(settings, store):
+    settings.llm.extra_body = {"thinking": {"type": "disabled"}}
+    a = analyst(settings, store, lambda p: {"ok": True})
+    a.chat_json("sys", {}, "test", max_tokens=10)
+    assert a.client.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}

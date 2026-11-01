@@ -46,6 +46,15 @@ Answer ONLY with JSON of this shape:
 Write the text fields in Chinese."""
 
 
+def _reasoning_tokens(usage) -> int | None:
+    details = (usage.get("completion_tokens_details") if isinstance(usage, dict)
+               else getattr(usage, "completion_tokens_details", None)) if usage is not None else None
+    if details is None:
+        return None
+    v = details.get("reasoning_tokens") if isinstance(details, dict) else getattr(details, "reasoning_tokens", None)
+    return int(v) if v is not None else None
+
+
 class BudgetExceeded(RuntimeError):
     pass
 
@@ -116,19 +125,36 @@ class Analyst:
         estimate = (len(system) + len(user)) // 3 + max_tokens
         if st["tokens_today"] + estimate > self.settings.llm.daily_token_budget:
             raise BudgetExceeded(f"call (~{estimate} tokens) would exceed the daily token budget")
+        extra = self.settings.llm.extra_body or None  # provider-specific switches, e.g. thinking on/off
         resp = self.client.chat.completions.create(
             model=self.model,
             temperature=self.settings.llm.temperature,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            **({"extra_body": extra} if extra else {}),
         )
-        prompt, cached, completion = usage_numbers(getattr(resp, "usage", None))
+        usage = getattr(resp, "usage", None)
+        prompt, cached, completion = usage_numbers(usage)
         if self.store is not None:
             self.store.add_usage(purpose=purpose, model=self.model, input_tokens=prompt,
                                  cached_tokens=cached, output_tokens=completion,
                                  cost_usd=self.cost(prompt, cached, completion))
-        return parse_json(resp.choices[0].message.content or "")
+        choice = resp.choices[0]
+        content = choice.message.content or ""
+        self.last_meta = {
+            "finish_reason": getattr(choice, "finish_reason", None),
+            "content_chars": len(content),
+            # Reasoning ("thinking") models spend output tokens before answering.
+            "reasoning_chars": len(getattr(choice.message, "reasoning_content", None) or ""),
+            "reasoning_tokens": _reasoning_tokens(usage),
+            "prompt_tokens": prompt, "cached_tokens": cached, "completion_tokens": completion,
+        }
+        if not content.strip():
+            log.warning("model returned no answer for %s (finish_reason=%s, reasoning tokens=%s); "
+                        "raise max_tokens or turn off thinking via [llm] extra_body",
+                        purpose, self.last_meta["finish_reason"], self.last_meta["reasoning_tokens"])
+        return parse_json(content)
 
     def build_payload(self, opportunities: list[dict], overview: list[dict]) -> dict:
         r = self.settings.risk
@@ -150,9 +176,19 @@ class Analyst:
     def ping(self) -> dict:
         """Tiny request to verify the model id and key; reports tokens and cost."""
         before = self.store.usage_today()["tokens"] if self.store else 0
-        out = self.chat_json('Reply with JSON {"ok": true}.', {"ping": 1}, "check", max_tokens=20)
+        out = self.chat_json('You are a health check. Reply with exactly this JSON: {"ok": true}',
+                             {"ping": 1}, "check", max_tokens=300)
         after = self.store.usage_today()["tokens"] if self.store else 0
-        return {"provider": self.provider, "model": self.model, "reply": out, "tokens": after - before,
+        ok = out.get("ok") is True
+        meta = getattr(self, "last_meta", {})
+        hint = None
+        if not ok and meta.get("finish_reason") == "length":
+            hint = ("output ran out before the answer (finish_reason=length). The model is probably "
+                    "'thinking' first: turn thinking off with [llm] extra_body, or pick a non-reasoning model.")
+        elif not ok:
+            hint = "model answered but not with the expected JSON; check the model name (LLM_MODEL)"
+        return {"ok": ok, "provider": self.provider, "model": self.model, "reply": out, "details": meta,
+                "hint": hint, "tokens": after - before,
                 "prices_per_1m": dict(zip(("input", "cached_input", "output"), self.prices))}
 
 

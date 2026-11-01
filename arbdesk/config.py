@@ -76,6 +76,8 @@ class LLMConfig:
     # Re-forecast a market only if its price moved this much, or this many hours passed.
     reforecast_price_move: float = 0.05
     reforecast_hours: float = 24.0
+    # Extra request fields passed through to the provider (e.g. to switch "thinking" off).
+    extra_body: dict = field(default_factory=dict)
 
 
 @dataclass
