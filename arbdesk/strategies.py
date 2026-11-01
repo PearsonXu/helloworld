@@ -23,8 +23,9 @@ from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
-TF_SECONDS = {"1h": 3600, "6h": 21600, "1d": 86400}
-LABELS = {"dca": "定投", "sma_cross": "均线交叉（趋势）", "donchian": "突破（唐奇安通道）", "rsi": "RSI 均值回归"}
+TF_SECONDS = {"1h": 3600, "2h": 7200, "6h": 21600, "1d": 86400}
+LABELS = {"dca": "定投", "sma_cross": "均线交叉（趋势）", "donchian": "突破（唐奇安通道）", "rsi": "RSI 均值回归",
+          "trend_fast": "快速趋势+风控"}
 
 
 # --------------------------------------------------------------------------
@@ -86,6 +87,9 @@ def backtest(name: str, candles: list[list], p: dict, capital: float, fee_pct: f
     """All-in/all-out at the close of the signal candle (DCA: periodic buys), with costs."""
     if len(candles) < 2:
         return {}
+    if name == "trend_fast":
+        from .trendfast import simulate
+        return simulate(candles, p, capital, fee_pct, slip_pct)["stats"]
     cost = (fee_pct + slip_pct) / 100
     cash, qty, trades, peak, mdd = capital, 0.0, 0, capital, 0.0
     if name == "dca":
@@ -139,10 +143,11 @@ class StrategyLab:
     def params(self, name: str) -> dict:
         return self.cfg.params[name]
 
-    def _candles(self, symbol: str, tf: str, cache: dict) -> list[list]:
-        if (symbol, tf) not in cache:  # one request per symbol/timeframe per tick
-            cache[(symbol, tf)] = self.market.ohlcv(symbol, tf)
-        return cache[(symbol, tf)]
+    def _candles(self, symbol: str, tf: str, cache: dict, limit: int = 300) -> list[list]:
+        key = (symbol, tf, limit)
+        if key not in cache:  # one fetch per symbol/timeframe per tick
+            cache[key] = self.market.ohlcv(symbol, tf, limit)
+        return cache[key]
 
     def tick(self, now_ms: int | None = None) -> dict:
         now_ms = now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -152,7 +157,8 @@ class StrategyLab:
             p = self.params(name)
             for sym in self.cfg.symbols:
                 try:
-                    candles = closed_candles(self._candles(sym, p["timeframe"], cache), p["timeframe"], now_ms)
+                    candles = closed_candles(self._candles(sym, p["timeframe"], cache, p.get("history_bars", 300)),
+                                             p["timeframe"], now_ms)
                     if len(candles) < 2:
                         continue
                     st = self.store.strat_state(name, sym)
@@ -192,6 +198,8 @@ class StrategyLab:
                 usd = min(p["amount_usd"], st["cash"])
                 return self._fill(name, sym, "buy", usd * (1 - cost) / price, price, usd, now_ms, last)
             return None
+        if name == "trend_fast":
+            return self._step_trend(sym, st, candles, price, cost, now_ms)
         if last <= st["last_candle_ts"]:
             return None  # act once per newly closed candle
         want = exposure_series(name, candles, p)[-1]
@@ -200,6 +208,35 @@ class StrategyLab:
             usd = st["cash"]
             return self._fill(name, sym, "buy", usd * (1 - cost) / price, price, usd, now_ms, last)
         if want == 0 and st["qty"] > 0:
+            return self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms, last)
+        return None
+
+    def _step_trend(self, sym, st, candles, price, cost, now_ms) -> dict | None:
+        """Fast trend: stops are checked against the live price on every scan; entries, exits
+        and stop updates follow the deterministic replay at each newly closed candle."""
+        from .trendfast import simulate
+        name, p = "trend_fast", self.params("trend_fast")
+        if st["qty"] > 0 and st["stop"] and price <= st["stop"]:
+            t = self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms,
+                           st["last_candle_ts"])
+            self.store.update_strat(name, sym, stop=None, note=f"实时止损 @ {price:,.2f}")
+            return t
+        last = candles[-1][0]
+        if last <= st["last_candle_ts"]:
+            return None
+        sim = simulate(candles, p, self.cfg.capital_per_strategy, self.cfg.fee_pct, self.cfg.slippage_pct)
+        note = sim["note"] or ""
+        if sim["cooldown_left_bars"] and not sim["in_position"]:
+            note = (note + " · " if note else "") + f"冷却中，约 {sim['cooldown_left_bars'] * 6} 小时后可再入场"
+        self.store.update_strat(name, sym, last_candle_ts=last, note=note,
+                                stop=sim["stop"] if sim["in_position"] else None)
+        if sim["in_position"] and st["qty"] == 0 and st["cash"] > 0:
+            frac = next((t["frac"] for t in reversed(sim["trades"]) if t["side"] == "buy"), 0.0)
+            usd = st["cash"] * frac
+            if usd <= 0:
+                return None
+            return self._fill(name, sym, "buy", usd * (1 - cost) / price, price, usd, now_ms, last)
+        if not sim["in_position"] and st["qty"] > 0:
             return self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms, last)
         return None
 
@@ -228,7 +265,9 @@ class StrategyLab:
                          "label": LABELS.get(st["name"], st["name"]), "equity": eq,
                          "return_pct": (eq / st["capital"] - 1) * 100 if eq else None,
                          "buy_hold_pct": hold, "max_dd_pct": st["max_dd"] * 100,
-                         "position": "持有" if st["qty"] > 0 else "空仓",
+                         "position": ("持有" + (f"（止损 {st['stop']:,.2f}）" if st.get("stop") else "")
+                                      if st["qty"] > 0 else "空仓"),
+                         "note": st.get("note") or "",
                          "backtest": json.loads(st["backtest"] or "{}")})
         return {"enabled": self.cfg.enabled, "rows": rows, "recent": self.store.strat_trades(30),
                 "fee_pct": self.cfg.fee_pct, "slippage_pct": self.cfg.slippage_pct}

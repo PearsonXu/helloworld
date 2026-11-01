@@ -51,8 +51,23 @@ class DipMarket:
         return float(t.get("last") or t.get("close"))
 
     def ohlcv(self, symbol: str, timeframe: str, limit: int = 300) -> list[list]:
-        """[[ts_ms, open, high, low, close, volume], ...] oldest first."""
-        return self.ex.fetch_ohlcv(symbol, timeframe, limit=limit)
+        """[[ts_ms, open, high, low, close, volume], ...] oldest first. Pages through history
+        when more than one request's worth (~300 candles) is asked for."""
+        if limit <= 300:
+            return self.ex.fetch_ohlcv(symbol, timeframe, limit=limit)
+        step = self.ex.parse_timeframe(timeframe) * 1000
+        now = self.ex.milliseconds()
+        since, rows = now - limit * step, {}
+        while since < now and len(rows) < limit:
+            batch = self.ex.fetch_ohlcv(symbol, timeframe, since=since, limit=300)
+            if not batch:
+                break
+            rows.update({c[0]: c for c in batch})
+            nxt = batch[-1][0] + step
+            if nxt <= since:
+                break
+            since = nxt
+        return [rows[k] for k in sorted(rows)][-limit:]
 
     def low_since(self, symbol: str, since_ms: int) -> float | None:
         """Lowest traded price since `since_ms` from 1-minute candles."""

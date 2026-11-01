@@ -59,8 +59,8 @@ class FakeMarket:
     def __init__(self, series, price):
         self.series, self.px = series, price
 
-    def ohlcv(self, symbol, tf):
-        return self.series[tf]
+    def ohlcv(self, symbol, tf, limit=300):
+        return self.series[tf][-limit:]
 
     def price(self, symbol):
         return self.px
@@ -118,3 +118,58 @@ def test_status_and_reset(lab):
     assert rows["sma_cross"]["position"] == "持有" and rows["sma_cross"]["equity"] == pytest.approx(25 * (1 - 0.0065))
     L.reset()
     assert L.status()["rows"] == [] and store.strat_trades() == []
+
+
+H6 = 6 * 3600 * 1000
+
+
+def test_trend_fast_live_sizing_and_realtime_stop(tmp_path):
+    (tmp_path / "config.toml").write_text(f'data_dir = "{(tmp_path / "data").as_posix()}"\n')
+    s = load_settings(tmp_path / "config.toml", tmp_path / ".env")
+    s.strategies.enabled = ["trend_fast"]
+    s.strategies.symbols = ["BTC/USD"]
+    store = Store(s.data_dir / "t.db")
+    up = candles([100.0 * 1.004 ** i for i in range(300)], tf_ms=H6)
+    m = FakeMarket({"6h": up}, price=up[-1][4])
+    lab = S.StrategyLab(s, store, market=m)
+    now = up[-1][0] + H6
+    out = lab.tick(now)
+    assert [t["side"] for t in out["trades"]] == ["buy"]
+    st = store.strat_state("trend_fast", "BTC/USD")
+    invested = 25 - st["cash"]
+    assert 0 < invested <= 12.5 + 1e-9                               # risk-sized, never more than 50%
+    assert st["stop"] and st["stop"] < up[-1][4]
+    # Price collapses between candle closes: the stop fires on this scan, not at the next close.
+    m.px = st["stop"] * 0.97
+    out = lab.tick(now + 60_000)
+    assert [t["side"] for t in out["trades"]] == ["sell"]
+    st = store.strat_state("trend_fast", "BTC/USD")
+    assert st["qty"] == 0 and "实时止损" in st["note"]
+    assert lab.tick(now + 120_000)["trades"] == []                    # no re-entry inside the same candle
+    row = lab.status()["rows"][0]
+    assert row["backtest"]["trades_per_week"] >= 0 and "fees_pct_of_capital" in row["backtest"]
+
+
+def test_ohlcv_pagination():
+    from arbdesk.dip import DipMarket
+
+    class Ex:
+        def __init__(self):
+            self.calls = 0
+
+        def parse_timeframe(self, tf):
+            return 3600
+
+        def milliseconds(self):
+            return 1000 * 3600 * 1000
+
+        def fetch_ohlcv(self, symbol, tf, since=None, limit=300):
+            self.calls += 1
+            start = since // 3_600_000
+            return [[h * 3_600_000, 1, 1, 1, 1, 1] for h in range(start, min(start + limit, 1000))]
+
+    m = DipMarket.__new__(DipMarket)
+    m.ex = Ex()
+    rows = m.ohlcv("BTC/USD", "1h", limit=900)
+    assert len(rows) == 900 and m.ex.calls == 3
+    assert [r[0] for r in rows] == sorted({r[0] for r in rows})        # ordered, no duplicates

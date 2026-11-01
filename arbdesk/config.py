@@ -201,7 +201,7 @@ class SimConfig:
 @dataclass
 class StrategyConfig:
     """Strategy lab: classic BTC/ETH spot strategies, paper-traded on live candles."""
-    enabled: list[str] = field(default_factory=lambda: ["dca", "sma_cross", "donchian", "rsi"])
+    enabled: list[str] = field(default_factory=lambda: ["dca", "sma_cross", "donchian", "rsi", "trend_fast"])
     exchange: str = "coinbase"
     symbols: list[str] = field(default_factory=lambda: ["BTC/USD", "ETH/USD"])
     capital_per_strategy: float = 25.0  # virtual $ per strategy and symbol (separate from the sim account)
@@ -212,6 +212,13 @@ class StrategyConfig:
         "sma_cross": {"timeframe": "1d", "fast": 20, "slow": 50},
         "donchian": {"timeframe": "1d", "entry": 20, "exit": 10},
         "rsi": {"timeframe": "1h", "period": 14, "buy_below": 30, "sell_above": 70},
+        # Fast trend with crash protection (see trendfast.py). Bars are 6 hours.
+        "trend_fast": {"timeframe": "6h", "history_bars": 900, "ema_fast": 8, "ema_slow": 24,
+                       "regime_sma": 200, "min_spread_pct": 0.3, "atr_period": 14, "atr_stop_mult": 2.0,
+                       "trail_atr_mult": 3.0, "min_stop_pct": 3.0, "hard_stop_pct": 6.0,
+                       "risk_per_trade_pct": 2.0, "max_position_pct": 50.0, "crash_drop_pct": 8.0,
+                       "crash_lookback": 4, "crash_cooldown": 8, "loss_streak": 3, "streak_cooldown": 12,
+                       "min_bars_between": 2, "max_drawdown_pct": 15.0},
     })
 
 

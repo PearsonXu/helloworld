@@ -188,7 +188,7 @@ auto_execute = true
 # Strategy lab: classic BTC/ETH spot strategies paper-traded on live candles.
 # Each strategy x symbol has its own virtual wallet (separate from [sim]). Paper only.
 [strategies]
-enabled = ["dca", "sma_cross", "donchian", "rsi"]
+enabled = ["dca", "sma_cross", "donchian", "rsi", "trend_fast"]
 exchange = "coinbase"
 symbols = ["BTC/USD", "ETH/USD"]
 capital_per_strategy = 25
@@ -215,6 +215,28 @@ timeframe = "1h"
 period = 14
 buy_below = 30
 sell_above = 70
+
+# Fast trend (6h bars) with crash protection. Only change these if you understand them.
+[strategies.params.trend_fast]
+timeframe = "6h"
+history_bars = 900             # ~225 days of 6h candles for the backtest
+ema_fast = 8                   # ~2 days
+ema_slow = 24                  # ~6 days
+regime_sma = 200               # ~50 days: no new longs below it (no buying in a bear market)
+min_spread_pct = 0.3           # ignore EMA crosses inside a flat range
+risk_per_trade_pct = 2         # a stop-out loses at most ~2% of the strategy's equity...
+max_position_pct = 50          # ...and never more than 50% of equity is in the market
+min_stop_pct = 3               # stop at least 3% away (calm markets would otherwise size up)
+hard_stop_pct = 6              # and at most 6% away
+atr_stop_mult = 2.0
+trail_atr_mult = 3.0           # trailing stop: highest high - 3 x ATR
+crash_drop_pct = 8             # 8% below the highest close of the last 4 bars (24h) -> exit...
+crash_lookback = 4
+crash_cooldown = 8             # ...and no new entries for 8 bars (2 days)
+loss_streak = 3                # 3 losses in a row -> pause 12 bars (3 days)
+streak_cooldown = 12
+min_bars_between = 2
+max_drawdown_pct = 15          # strategy drawdown of 15% -> stop until reset
 
 # ---------------------------------------------------------------------------
 # Email alerts for black-swan events. Password goes in the vault, never here:

@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS strat_state (
     peak REAL NOT NULL,
     max_dd REAL NOT NULL DEFAULT 0,
     backtest TEXT,
+    stop REAL,
+    note TEXT,
     PRIMARY KEY (name, symbol)
 );
 CREATE TABLE IF NOT EXISTS strat_trades (
@@ -185,6 +187,10 @@ class Store:
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(pm_forecasts)")}
             if "venue" not in cols:  # databases created before Kalshi / Polymarket US
                 self.conn.execute("ALTER TABLE pm_forecasts ADD COLUMN venue TEXT NOT NULL DEFAULT 'polymarket'")
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(strat_state)")}
+            for col, typ in (("stop", "REAL"), ("note", "TEXT")):
+                if col not in cols:
+                    self.conn.execute(f"ALTER TABLE strat_state ADD COLUMN {col} {typ}")
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(alerts)")}
             if "emailed" not in cols:  # 0 = not yet considered, 1 = emailed, 2 = not an email category
                 self.conn.execute("ALTER TABLE alerts ADD COLUMN emailed INTEGER NOT NULL DEFAULT 0")
@@ -453,7 +459,7 @@ class Store:
     def strat_states(self) -> list[dict]:
         return self._rows("SELECT * FROM strat_state ORDER BY name, symbol")
 
-    STRAT_FIELDS = {"cash", "qty", "last_candle_ts", "last_action_ms", "trades", "peak", "max_dd"}
+    STRAT_FIELDS = {"cash", "qty", "last_candle_ts", "last_action_ms", "trades", "peak", "max_dd", "stop", "note"}
 
     def update_strat(self, name: str, symbol: str, **fields) -> None:
         cols = [k for k in fields if k in self.STRAT_FIELDS]  # whitelist: column names go into SQL
