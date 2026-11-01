@@ -228,9 +228,14 @@ class StrategyLab:
                             risk = self._lppls_risk(name, sym, p, candles[0][0], cache, now_ms)
                         except Exception as e:  # the filter fails open: the strategy's own stops still apply
                             out["errors"][f"lppls:{sym}"] = f"{type(e).__name__}: {str(e)[:150]}"
+                    bt_before = json.loads(st["backtest"] or "{}")  # the record the signal is judged on
                     trade = self._step(name, sym, st, candles, price, cost, now_ms, risk)
                     if trade:
                         out["trades"].append(trade)
+                        try:
+                            self._signal(name, sym, trade, candles, price, now_ms, risk, bt_before)
+                        except Exception as e:  # never let an email problem break the paper ledger
+                            out["errors"][f"signal:{name}:{sym}"] = f"{type(e).__name__}: {str(e)[:150]}"
                     st = self.store.strat_state(name, sym)
                     eq = st["cash"] + st["qty"] * price
                     self.store.update_strat(name, sym, peak=max(st["peak"], eq),
@@ -263,7 +268,8 @@ class StrategyLab:
         if last <= st["last_candle_ts"]:
             return None  # act once per newly closed candle
         want = exposure_series(name, candles, p)[-1]
-        self.store.update_strat(name, sym, last_candle_ts=last)
+        bt = backtest(name, candles, p, self.cfg.capital_per_strategy, self.cfg.fee_pct, self.cfg.slippage_pct)
+        self.store.update_strat(name, sym, last_candle_ts=last, backtest=json.dumps(bt))
         if want == 1 and st["qty"] == 0 and st["cash"] > 0:
             usd = st["cash"]
             return self._fill(name, sym, "buy", usd * (1 - cost) / price, price, usd, now_ms, last)
@@ -344,7 +350,7 @@ class StrategyLab:
             t = self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms,
                            st["last_candle_ts"])
             self.store.update_strat(name, sym, stop=None, note=f"实时止损 @ {price:,.2f}")
-            return t
+            return {**t, "realtime_stop": st["stop"]}
         last = candles[-1][0]
         if last <= st["last_candle_ts"]:
             return None
@@ -375,6 +381,115 @@ class StrategyLab:
             return self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms, last)
         return None
 
+    # Signal alerts -----------------------------------------------------------
+    def signal_eligible(self, name: str, sym: str, bt: dict | None = None) -> tuple[bool, str]:
+        from . import signals
+        p = self.params(name)
+        if not self.cfg.signal_alerts:
+            return False, "信号提醒已关闭"
+        if name not in self.cfg.signal_strategies and engine(name, p) not in self.cfg.signal_strategies:
+            return False, "这个策略不发信号提醒（太快，手动跟不上）"
+        if bt is None:
+            st = self.store.strat_state(name, sym)
+            bt = json.loads(st["backtest"] or "{}") if st else {}
+        return signals.qualifies(bt, self.cfg)
+
+    def _signal(self, name, sym, trade, candles, price, now_ms, risk, bt: dict) -> None:
+        """`bt`: the backtest as it stood before this trade (a fresh entry's own fee must not
+        disqualify the signal it belongs to)."""
+        from . import signals
+        ok, qual = self.signal_eligible(name, sym, bt)
+        if not ok:
+            return
+        p = self.params(name)
+        tf = p["timeframe"]
+        bar_ms = TF_SECONDS[tf] * 1000
+        side = trade["side"]
+        kind, stop, synced = ("entry" if side == "buy" else "exit"), None, False
+        if trade.get("realtime_stop"):
+            kind, sig_ms, sig_px = "stop", now_ms, price
+            why = [f"现价 {price:,.2f} 跌破止损价 {trade['realtime_stop']:,.2f}（每 5 分钟用最新价检查，不等 K 线收盘）"]
+            action = "卖出这个策略的全部持仓。"
+        elif simulator(engine(name, p)):
+            sig_ms, sig_px, why, action, stop, synced = self._why_replay(name, p, candles, side, risk, bar_ms)
+            if side == "sell":
+                kind = "stop" if why and why[0].startswith("止损") else "exit"
+        else:
+            sig_ms, sig_px, why, action, synced = self._why_exposure(name, p, candles, side, bar_ms)
+        title, detail = signals.build(
+            label=label(name, p), symbol=sym, side=side, kind=kind, tf=tf, why=why, signal_ms=sig_ms,
+            signal_price=sig_px, now_ms=now_ms, price=price, bt=bt, qual=qual, action=action, stop=stop,
+            tz_name=self.settings.email.timezone, synced=synced)
+        key = f"signal:{name}:{sym}:{side}:{sig_ms}"
+        if not self.store.alert_recent(key, hours=24 * 30, level="warning"):
+            self.store.add_alert(key, "warning", title, detail)
+
+    def _why_exposure(self, name, p, candles, side, bar_ms):
+        exp = exposure_series(name, candles, p)
+        j = len(exp) - 1
+        while j > 0 and exp[j - 1] == exp[j]:
+            j -= 1                                            # the candle where the position flipped
+        c = candles[j]
+        closes = [x[4] for x in candles]
+        synced = j < len(candles) - 1
+        if name == "sma_cross":
+            f, s = sma(closes[: j + 1], p["fast"]), sma(closes[: j + 1], p["slow"])
+            f0, s0 = sma(closes[:j], p["fast"]), sma(closes[:j], p["slow"])
+            word = "上穿" if side == "buy" else "下穿"
+            why = [f"{p['fast']} 日均线 {f:,.2f} {word} {p['slow']} 日均线 {s:,.2f}"
+                   + (f"（前一天 {f0:,.2f} vs {s0:,.2f}）" if f0 and s0 else ""),
+                   "短期均线在长期均线之上 = 中期趋势向上，策略持有；反之空仓。" if side == "buy" else
+                   "短期均线跌到长期均线之下 = 中期趋势转弱，策略离场，避开可能的单边下跌。"]
+        elif name == "donchian":
+            if side == "buy":
+                hi = max(x[2] for x in candles[j - p["entry"]:j])
+                why = [f"收盘价 {c[4]:,.2f} 突破前 {p['entry']} 天最高价 {hi:,.2f}", "创出新高 = 可能开始一段新趋势。"]
+            else:
+                lo = min(x[3] for x in candles[j - p["exit"]:j])
+                why = [f"收盘价 {c[4]:,.2f} 跌破前 {p['exit']} 天最低价 {lo:,.2f}", "跌破近期低点 = 这段趋势可能结束。"]
+        else:
+            r = rsi(closes[: j + 1], p.get("period", 14))
+            why = [f"RSI({p.get('period', 14)}) = {r:.0f}" if r is not None else "RSI 信号"]
+        action = ("用分给这个策略的资金全部买入。这个策略没有止损，靠反向信号卖出，所以要准备好承受较大回撤。"
+                  if side == "buy" else "卖出这个策略的全部持仓。")
+        return c[0] + bar_ms, c[4], why, action, synced
+
+    def _why_replay(self, name, p, candles, side, risk, bar_ms):
+        simulate = simulator(engine(name, p))
+        sim = simulate(candles, p, self.cfg.capital_per_strategy, self.cfg.fee_pct, self.cfg.slippage_pct, risk=risk)
+        t = next((x for x in reversed(sim["trades"]) if x["side"] == side), None)
+        if t is None:
+            return candles[-1][0] + bar_ms, candles[-1][4], ["策略状态改变"], "按面板显示操作。", None, False
+        i, closes = t["bar"], [x[4] for x in candles]
+        synced = i < len(candles) - 1
+        ef = es = None
+        kf, ks = 2 / (p.get("ema_fast", 8) + 1), 2 / (p.get("ema_slow", 24) + 1)
+        for x in closes[: i + 1]:
+            ef = x if ef is None else ef + kf * (x - ef)
+            es = x if es is None else es + ks * (x - es)
+        reg = sma(closes[: i + 1], p.get("regime_sma", 200))
+        why, stop = [], None
+        if side == "buy":
+            why.append(f"快线 EMA{p.get('ema_fast')} {ef:,.2f} 高于慢线 EMA{p.get('ema_slow')} {es:,.2f}"
+                       f"（差 {(ef / es - 1) * 100:.2f}%），短期趋势向上")
+            if reg:
+                why.append(f"价格 {closes[i]:,.2f} 在 {p.get('regime_sma')} 根 K 线均线 {reg:,.2f} 之上，不是熊市")
+            if risk is not None:
+                why.append(f"LPPLS 泡沫置信度 {sim['bubble']:.0%}，低于禁止开仓线 {p.get('lppls_block', 0.5):.0%}")
+            stop = t.get("stop")
+            frac = t.get("frac", 1.0)
+            action = (f"用分给这个策略资金的 {frac * 100:.0f}% 买入（按风险计算：触发止损时约亏总资金的 "
+                      f"{p.get('risk_per_trade_pct', 2)}%；仓位上限 {p.get('max_position_pct', 50):.0f}%）。")
+        else:
+            reasons = {"止损": "价格跌破初始止损价", "移动止损": "价格从高点回落，跌破移动止损价",
+                       "趋势结束": "快线跌破慢线，或价格跌破长期均线，趋势结束",
+                       "暴跌熔断": f"24 小时内比近期最高收盘价下跌超过 {p.get('crash_drop_pct', 8)}%，暴跌熔断",
+                       "LPPLS 泡沫离场": f"LPPLS 泡沫置信度 {sim['bubble']:.0%}，达到离场线",
+                       "回撤熔断": "策略回撤达到上限，停止交易"}
+            why.append(f"{t['reason']}：{reasons.get(t['reason'], t['reason'])}")
+            action = "卖出这个策略的全部持仓。"
+        return candles[i][0] + bar_ms, closes[i], why, action, stop, synced
+
     def _fill(self, name, sym, side, qty, price, usd, now_ms, candle_ts) -> dict:
         st = self.store.strat_state(name, sym)
         if side == "buy":
@@ -403,6 +518,9 @@ class StrategyLab:
                          "position": ("持有" + (f"（止损 {st['stop']:,.2f}）" if st.get("stop") else "")
                                       if st["qty"] > 0 else "空仓"),
                          "note": st.get("note") or "",
+                         "signal": dict(zip(("on", "why"), self.signal_eligible(st["name"], st["symbol"],
+                                                                                json.loads(st["backtest"] or "{}"))))
+                         if st["name"] in self.cfg.params else {"on": False, "why": ""},
                          "backtest": json.loads(st["backtest"] or "{}")})
         return {"enabled": self.enabled(), "rows": rows, "recent": self.store.strat_trades(30),
                 "lppls": self.lppls_status(),

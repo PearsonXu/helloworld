@@ -23,7 +23,7 @@ CATEGORY_LABELS = {
     "move1h": "1 小时急涨急跌", "move24h": "24 小时大幅波动", "depeg": "稳定币脱锚", "ivjump": "波动率飙升",
     "ivhigh": "波动率极高", "funding": "资金费率极端", "tail_cheap": "便宜的黑天鹅彩票", "dip_fill": "抄底挂单成交",
     "outage": "数据源中断", "sim_end": "模拟结束", "dip_rearm": "抄底挂单需要重新布置",
-    "lppls": "LPPLS 泡沫风险",
+    "lppls": "LPPLS 泡沫风险", "signal": "策略买卖信号",
 }
 
 
@@ -71,8 +71,11 @@ class EmailNotifier:
         return out
 
     def _wanted(self, a: dict) -> bool:
+        cat = category(a["key"])
+        if cat == "signal":  # follows [strategies] signal_alerts, even with an older categories list
+            return self.settings.strategies.signal_alerts or cat in self.cfg.categories
         return (LEVELS.get(a["level"], 0) >= LEVELS.get(self.cfg.min_level, 1)
-                and category(a["key"]) in self.cfg.categories)
+                and cat in self.cfg.categories)
 
     def run(self) -> dict:
         """Send one digest of new matching alerts (if any). Safe to call every scan."""
@@ -89,22 +92,42 @@ class EmailNotifier:
             self.store.mark_alerts_emailed(skipped, 2)  # 2 = not an email category
         if not wanted:
             return {"sent": 0}
-        if self.store.emails_sent_since(datetime.now(timezone.utc) - timedelta(hours=1)) >= self.cfg.max_per_hour:
-            return {"deferred": len(wanted), "reason": "hourly email cap reached"}  # retried next scan
+        sent = 0
+        # Strategy signals are time-sensitive and self-contained: one email each, ahead of the digest.
+        for a in [a for a in wanted if category(a["key"]) == "signal"]:
+            if self._capped():
+                return {"sent": sent, "deferred": len(wanted) - sent, "reason": "hourly email cap reached"}
+            subject = f"{self.cfg.subject_prefix} {a['title']}"
+            if (err := self._send(subject, f"{a['detail']}\n\n——\nArbDesk 策略信号 · 详情请在电脑上打开 ArbDesk 面板（只能在本机访问）。", [a])):
+                return err
+            sent += 1
+        wanted = [a for a in wanted if category(a["key"]) != "signal"]
+        if not wanted:
+            return {"sent": sent}
+        if self._capped():
+            return {"sent": sent, "deferred": len(wanted), "reason": "hourly email cap reached"}  # retried next scan
         worst = max(wanted, key=lambda a: LEVELS.get(a["level"], 0))
         subject = f"{self.cfg.subject_prefix} {'【严重】' if worst['level'] == 'critical' else ''}{worst['title']}"
         if len(wanted) > 1:
             subject += f"（另有 {len(wanted) - 1} 条）"
-        body = self.body(wanted)
+        if (err := self._send(subject, self.body(wanted), wanted)):
+            return err
+        return {"sent": sent + 1, "alerts": len(wanted)}
+
+    def _capped(self) -> bool:
+        return self.store.emails_sent_since(datetime.now(timezone.utc) - timedelta(hours=1)) >= self.cfg.max_per_hour
+
+    def _send(self, subject: str, body: str, alerts: list[dict]) -> dict | None:
+        """Send one email; returns an error dict on failure (alerts stay queued for the next scan)."""
         try:
             self.sender(self.cfg, self.settings.secrets.smtp_password, subject, body)
         except Exception as e:
-            self.store.log_email(subject, len(wanted), ok=False, error=f"{type(e).__name__}: {e}")
+            self.store.log_email(subject, len(alerts), ok=False, error=f"{type(e).__name__}: {e}")
             log.warning("email alert failed: %s", e)
             return {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-        self.store.log_email(subject, len(wanted), ok=True)
-        self.store.mark_alerts_emailed([a["id"] for a in wanted], 1)
-        return {"sent": 1, "alerts": len(wanted)}
+        self.store.log_email(subject, len(alerts), ok=True)
+        self.store.mark_alerts_emailed([a["id"] for a in alerts], 1)
+        return None
 
     @staticmethod
     def body(alerts: list[dict]) -> str:

@@ -222,6 +222,13 @@ class StrategyConfig:
     capital_per_strategy: float = 25.0  # virtual $ per strategy and symbol (separate from the sim account)
     fee_pct: float = 0.6                # per fill; Coinbase's entry-tier fees can be higher, check yours
     fee_pct_low: float = 0.1            # second backtest at a low (maker / high-tier) fee, for comparison
+    # Buy/sell signal emails (signals.py), only for strategy+symbol pairs whose backtest qualifies.
+    signal_alerts: bool = True
+    signal_strategies: list[str] = field(default_factory=lambda: ["sma_cross", "donchian", "trend_fast", "custom1"])
+    signal_min_return_pct: float = 0.0
+    signal_min_excess_pct: float = 0.0  # must beat buy-and-hold by more than this
+    signal_max_drawdown_pct: float = 25.0
+    signal_min_trades: int = 2
     slippage_pct: float = 0.05
     params: dict = field(default_factory=lambda: {
         "dca": {"timeframe": "1d", "every_days": 7, "amount_usd": 5.0},
@@ -257,6 +264,7 @@ class EmailConfig:
     max_per_hour: int = 4
     lookback_hours: float = 6.0        # ignore older alerts (e.g. right after enabling)
     subject_prefix: str = "[ArbDesk]"
+    timezone: str = "America/New_York"  # times in signal emails (UTC is shown too)
 
 
 # Venue-specific defaults on top of VenueConfig's.

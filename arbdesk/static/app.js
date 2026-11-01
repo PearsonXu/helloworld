@@ -172,7 +172,8 @@ async function renderStrategies() {
   $("stratrows").innerHTML = d.rows.map((r) => {
     const bt = r.backtest || {};
     const days = bt.from ? Math.round((bt.to - bt.from) / 86400000) : 0;
-    return `<tr><td>${esc(r.label)}</td><td>${esc(r.symbol)}</td><td>${esc(r.position)}${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ""}</td>
+    return `<tr><td>${esc(r.label)}</td><td>${esc(r.symbol)}</td><td>${esc(r.position)}${r.note ? `<br><span class="muted">${esc(r.note)}</span>` : ""}
+      ${r.signal && r.signal.on ? `<br><span class="good" title="${esc(r.signal.why)}">📧 买卖信号会发邮件</span>` : ""}</td>
       <td>$${num(r.equity)}</td><td>${pct(r.return_pct)}</td><td>${pct(r.buy_hold_pct)}</td>
       <td>${num(r.max_dd_pct, 1)}%</td><td>${r.trades}</td>
       <td>${bt.return_pct == null ? "—" : `${pct(bt.return_pct)} vs 持有 ${pct(bt.buy_hold_pct)} · 回撤 ${num(bt.max_drawdown_pct, 1)}% · ${bt.trades} 笔 · ${days} 天`}
@@ -261,7 +262,7 @@ async function renderAlerts() {
       <b class="${color[x.level] || ""}">${x.level === "critical" ? "严重" : x.level === "warning" ? "注意" : "提示"} · ${esc(x.title)}</b>
       <span class="muted">${esc(x.ts.slice(0, 16))}</span><span style="flex:1"></span>
       <button class="ghost" data-ack="${x.id}">已读</button></div>
-      <div class="muted">${esc(x.detail)}</div></div>`).join("");
+      <div class="muted" style="white-space:pre-line">${esc(x.detail)}</div></div>`).join("");
 }
 
 async function renderTail() {
