@@ -176,8 +176,15 @@ async function renderStrategies() {
       <td>$${num(r.equity)}</td><td>${pct(r.return_pct)}</td><td>${pct(r.buy_hold_pct)}</td>
       <td>${num(r.max_dd_pct, 1)}%</td><td>${r.trades}</td>
       <td>${bt.return_pct == null ? "—" : `${pct(bt.return_pct)} vs 持有 ${pct(bt.buy_hold_pct)} · 回撤 ${num(bt.max_drawdown_pct, 1)}% · ${bt.trades} 笔 · ${days} 天`}
-        ${bt.trades_per_week != null ? `<br><span class="muted">每周 ${num(bt.trades_per_week, 1)} 笔 · 胜率 ${bt.win_rate_pct == null ? "—" : num(bt.win_rate_pct, 0) + "%"} · 平均持有 ${bt.avg_hold_days ?? "—"} 天 · 手续费占本金 ${num(bt.fees_pct_of_capital, 1)}%</span>` : ""}</td></tr>`;
+        ${bt.trades_per_week != null ? `<br><span class="muted">每周 ${num(bt.trades_per_week, 1)} 笔 · 胜率 ${bt.win_rate_pct == null ? "—" : num(bt.win_rate_pct, 0) + "%"} · 平均持有 ${bt.avg_hold_days ?? "—"} 天 · 手续费占本金 ${num(bt.fees_pct_of_capital, 1)}%</span>` : ""}
+        ${bt.without_lppls ? `<br><span class="muted">不加 LPPLS：${pct(bt.without_lppls.return_pct)} · 回撤 ${num(bt.without_lppls.max_drawdown_pct, 1)}% · ${bt.without_lppls.trades} 笔</span>` : ""}</td></tr>`;
   }).join("") || `<tr><td colspan="9" class="muted">下一次扫描时自动开始（每个策略每个币种 $25 虚拟资金）</td></tr>`;
+  const lp = Object.entries(d.lppls || {});
+  $("stratlppls").innerHTML = lp.length ? "LPPLS 泡沫置信度（日线，昨日收盘）：" + lp.map(([sym, v]) => {
+    const cls = v.bubble >= 0.5 ? "bad" : v.bubble >= 0.25 ? "warn" : "good";
+    return `${esc(sym)} <span class="${cls}">${num(v.bubble * 100, 0)}%</span>`
+      + ` <span class="muted">(30 天最高 ${num(v.max_30d * 100, 0)}% · 反泡沫 ${num(v.anti * 100, 0)}%${v.tc_days != null ? ` · 临界点约 ${num(v.tc_days, 0)} 天` : ""})</span>`;
+  }).join(" · ") + `<br><span class="muted">≥25% 收紧移动止损，≥50% 不开新仓，≥75% 离场。只作用于"快速趋势+风控"。</span>` : "";
   $("stratnote").textContent = `手续费 ${d.fee_pct}% + 滑点 ${d.slippage_pct}%/笔；信号只用已收盘的 K 线。回测用同一套规则跑最近的历史行情，只代表过去；"同期持有"是同一时段一直持有不动的收益，用来对比策略有没有价值。`;
 }
 

@@ -168,7 +168,13 @@ class StrategyLab:
                     price = prices[sym]
                     if st is None:
                         st = self._start(name, sym, candles, price, now_ms)
-                    trade = self._step(name, sym, st, candles, price, cost, now_ms)
+                    risk = None
+                    if name == "trend_fast" and p.get("use_lppls"):
+                        try:
+                            risk = self._lppls_risk(sym, p, candles[0][0], cache, now_ms)
+                        except Exception as e:  # the filter fails open: the strategy's own stops still apply
+                            out["errors"][f"lppls:{sym}"] = f"{type(e).__name__}: {str(e)[:150]}"
+                    trade = self._step(name, sym, st, candles, price, cost, now_ms, risk)
                     if trade:
                         out["trades"].append(trade)
                     st = self.store.strat_state(name, sym)
@@ -189,7 +195,7 @@ class StrategyLab:
                              json.dumps(bt))
         return self.store.strat_state(name, sym)
 
-    def _step(self, name, sym, st, candles, price, cost, now_ms) -> dict | None:
+    def _step(self, name, sym, st, candles, price, cost, now_ms, risk=None) -> dict | None:
         p = self.params(name)
         last = candles[-1][0]
         if name == "dca":
@@ -199,7 +205,7 @@ class StrategyLab:
                 return self._fill(name, sym, "buy", usd * (1 - cost) / price, price, usd, now_ms, last)
             return None
         if name == "trend_fast":
-            return self._step_trend(sym, st, candles, price, cost, now_ms)
+            return self._step_trend(sym, st, candles, price, cost, now_ms, risk)
         if last <= st["last_candle_ts"]:
             return None  # act once per newly closed candle
         want = exposure_series(name, candles, p)[-1]
@@ -211,7 +217,69 @@ class StrategyLab:
             return self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms, last)
         return None
 
-    def _step_trend(self, sym, st, candles, price, cost, now_ms) -> dict | None:
+    # LPPLS bubble filter ------------------------------------------------------
+    def _lppls_risk(self, sym: str, p: dict, first_bar_ms: int, cache: dict, now_ms: int) -> dict[int, float]:
+        """{day_ms: bubble confidence} covering the trend backtest, from daily candles.
+        Cached in the flags table; after the first run only newly closed days are fitted."""
+        from . import lppls
+        windows = sorted(p["lppls_windows"])
+        need_from = (first_bar_ms // lppls.DAY_MS - 1) * lppls.DAY_MS
+        days_needed = (now_ms - need_from) // lppls.DAY_MS + max(windows) + 5
+        daily = closed_candles(self._candles(sym, "1d", cache, int(days_needed)), "1d", now_ms)
+        daily = [(c[0], c[4]) for c in daily]
+        key = f"lppls:{sym}"
+        flag = self.store.get_flag(key)
+        cached = {}
+        if flag:
+            data = json.loads(flag["value"])
+            if data.get("cfg") == [windows, p["lppls_min_r2"]]:  # settings changed -> refit everything
+                cached = {int(d): v for d, v in data["days"].items()}
+        series = lppls.update_series(cached, daily, windows, p["lppls_min_r2"], need_from)
+        if series.keys() != cached.keys():
+            self.store.set_flag(key, json.dumps({"cfg": [windows, p["lppls_min_r2"]],
+                                                 "days": {str(d): v for d, v in sorted(series.items())}}))
+            self._lppls_alert(sym, series, p)
+        return {d: v[0] for d, v in series.items()}
+
+    def _lppls_alert(self, sym: str, series: dict, p: dict) -> None:
+        if not series:
+            return
+        day = max(series)
+        bubble, _, tc = series[day]
+        if bubble < p["lppls_tighten"]:
+            return
+        if bubble >= p["lppls_exit"]:
+            action = "已离场，不开新仓。"
+        elif bubble >= p["lppls_block"]:
+            action = "暂停开新仓，持仓的移动止损收紧。"
+        else:
+            action = "持仓的移动止损收紧（仍可开仓）。"
+        key = f"lppls:{sym}"
+        level = "warning"  # a paper-strategy signal, not a market emergency (critical can halt live trading)
+        if self.store.alert_recent(key, hours=24, level=level):
+            return
+        when = f"，模型估计的临界点约在 {tc:.0f} 天后（误差很大，仅供参考）" if tc is not None else ""
+        self.store.add_alert(
+            key, level, f"{sym} LPPLS 泡沫置信度 {bubble:.0%}",
+            f"日线价格呈“加速上涨 + 振荡收敛”的泡沫形态{when}。快速趋势策略"
+            + action + "LPPLS 误报很多，它只用来减少风险，不用来做空。")
+
+    def lppls_status(self) -> dict:
+        out = {}
+        for sym in self.cfg.symbols:
+            flag = self.store.get_flag(f"lppls:{sym}")
+            if not flag:
+                continue
+            days = json.loads(flag["value"])["days"]
+            if not days:
+                continue
+            d = max(days, key=int)
+            bubble, anti, tc = days[d]
+            out[sym] = {"day": int(d), "bubble": bubble, "anti": anti, "tc_days": tc,
+                        "max_30d": max(v[0] for k, v in days.items() if int(k) >= int(d) - 30 * 86_400_000)}
+        return out
+
+    def _step_trend(self, sym, st, candles, price, cost, now_ms, risk=None) -> dict | None:
         """Fast trend: stops are checked against the live price on every scan; entries, exits
         and stop updates follow the deterministic replay at each newly closed candle."""
         from .trendfast import simulate
@@ -224,11 +292,17 @@ class StrategyLab:
         last = candles[-1][0]
         if last <= st["last_candle_ts"]:
             return None
-        sim = simulate(candles, p, self.cfg.capital_per_strategy, self.cfg.fee_pct, self.cfg.slippage_pct)
+        args = (candles, p, self.cfg.capital_per_strategy, self.cfg.fee_pct, self.cfg.slippage_pct)
+        sim = simulate(*args, risk=risk)
+        bt = dict(sim["stats"])
+        if risk:
+            plain = simulate(*args)["stats"]
+            bt["without_lppls"] = {k: plain[k] for k in ("return_pct", "max_drawdown_pct", "trades", "win_rate_pct")}
+            bt["bubble_now"] = sim["bubble"]
         note = sim["note"] or ""
         if sim["cooldown_left_bars"] and not sim["in_position"]:
             note = (note + " · " if note else "") + f"冷却中，约 {sim['cooldown_left_bars'] * 6} 小时后可再入场"
-        self.store.update_strat(name, sym, last_candle_ts=last, note=note,
+        self.store.update_strat(name, sym, last_candle_ts=last, note=note, backtest=json.dumps(bt),
                                 stop=sim["stop"] if sim["in_position"] else None)
         if sim["in_position"] and st["qty"] == 0 and st["cash"] > 0:
             frac = next((t["frac"] for t in reversed(sim["trades"]) if t["side"] == "buy"), 0.0)
@@ -270,6 +344,7 @@ class StrategyLab:
                          "note": st.get("note") or "",
                          "backtest": json.loads(st["backtest"] or "{}")})
         return {"enabled": self.cfg.enabled, "rows": rows, "recent": self.store.strat_trades(30),
+                "lppls": self.lppls_status(),
                 "fee_pct": self.cfg.fee_pct, "slippage_pct": self.cfg.slippage_pct}
 
     def _last_price(self, symbol: str) -> float | None:

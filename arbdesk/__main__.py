@@ -239,7 +239,11 @@ def main() -> None:
             print("strategy lab reset; it restarts on the next run")
         if args.action == "run":
             print(json.dumps(desk.lab.tick(), ensure_ascii=False, indent=2, default=str))
-        for r in desk.lab.status()["rows"]:
+        status = desk.lab.status()
+        for sym, v in status["lppls"].items():
+            print(f"LPPLS {sym}: bubble {v['bubble']:.0%} (30d max {v['max_30d']:.0%}), anti-bubble {v['anti']:.0%}"
+                  + (f", critical time ~{v['tc_days']:.0f} days" if v["tc_days"] is not None else ""))
+        for r in status["rows"]:
             bt = r["backtest"]
             print(f"{r['label']:<14} {r['symbol']:8} {r['position']:3} equity ${r['equity'] or 0:7.2f} "
                   f"({(r['return_pct'] or 0):+6.2f}%, hold {(r['buy_hold_pct'] or 0):+6.2f}%) trades {r['trades']:>3} | "
@@ -248,6 +252,8 @@ def main() -> None:
                   + (f" | {bt['trades_per_week']}/week, win {bt.get('win_rate_pct')}%, hold {bt.get('avg_hold_days')}d, "
                      f"fees {bt.get('fees_pct_of_capital')}% of capital, exits {bt.get('exits')}"
                      if "trades_per_week" in bt else "")
+                  + (f" | without LPPLS {bt['without_lppls']['return_pct']:+.2f}%, "
+                     f"maxDD {bt['without_lppls']['max_drawdown_pct']:.1f}%" if "without_lppls" in bt else "")
                   + (f" | {r['note']}" if r.get("note") else ""))
     elif args.cmd == "sim":
         def show(r):

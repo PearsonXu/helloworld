@@ -459,7 +459,7 @@ class Store:
     def strat_states(self) -> list[dict]:
         return self._rows("SELECT * FROM strat_state ORDER BY name, symbol")
 
-    STRAT_FIELDS = {"cash", "qty", "last_candle_ts", "last_action_ms", "trades", "peak", "max_dd", "stop", "note"}
+    STRAT_FIELDS = {"cash", "qty", "last_candle_ts", "last_action_ms", "trades", "peak", "max_dd", "stop", "note", "backtest"}
 
     def update_strat(self, name: str, symbol: str, **fields) -> None:
         cols = [k for k in fields if k in self.STRAT_FIELDS]  # whitelist: column names go into SQL

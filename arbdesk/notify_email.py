@@ -23,6 +23,7 @@ CATEGORY_LABELS = {
     "move1h": "1 小时急涨急跌", "move24h": "24 小时大幅波动", "depeg": "稳定币脱锚", "ivjump": "波动率飙升",
     "ivhigh": "波动率极高", "funding": "资金费率极端", "tail_cheap": "便宜的黑天鹅彩票", "dip_fill": "抄底挂单成交",
     "outage": "数据源中断", "sim_end": "模拟结束", "dip_rearm": "抄底挂单需要重新布置",
+    "lppls": "LPPLS 泡沫风险",
 }
 
 

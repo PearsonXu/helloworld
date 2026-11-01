@@ -17,6 +17,12 @@ with risk controls aimed at one-sided crashes:
                            `crash_lookback` bars -> exit, no new entries for crash_cooldown bars
   pauses    `loss_streak` losing trades in a row -> pause `streak_cooldown` bars
             equity drawdown >= max_drawdown_pct from its peak -> stop until reset
+  LPPLS     optional bubble filter (lppls.py), daily confidence of a positive bubble:
+            >= lppls_tighten -> trailing stop tightens to lppls_trail_atr_mult ATR
+            >= lppls_block   -> no new entries
+            >= lppls_exit    -> exit now
+            Each bar only sees the confidence of the last day that had fully closed
+            before the bar closed, so there is no look-ahead.
 
 Stops are hit intra-bar in the backtest (fill at the stop, or at the open if the
 bar gapped through it); live, the engine checks the stop against the current
@@ -27,11 +33,19 @@ the backtest and the source of the live position, so the two cannot drift.
 """
 from __future__ import annotations
 
+import bisect
+
 BAR_HOURS = 6
+DAY_MS = 86_400_000
 
 
-def simulate(candles: list[list], p: dict, capital: float, fee_pct: float, slip_pct: float) -> dict:
+def simulate(candles: list[list], p: dict, capital: float, fee_pct: float, slip_pct: float,
+             risk: dict[int, float] | None = None) -> dict:
+    """`risk`: {day_start_ms: LPPLS bubble confidence using data through that day}; None = no filter."""
     cost = (fee_pct + slip_pct) / 100
+    bar_ms = BAR_HOURS * 3_600_000
+    use_risk = bool(risk) and p.get("use_lppls", True)
+    risk_days = sorted(risk) if use_risk else []
     closes = [c[4] for c in candles]
     n_fast, n_slow, n_reg, n_atr = p["ema_fast"], p["ema_slow"], p["regime_sma"], p["atr_period"]
     kf, ks = 2 / (n_fast + 1), 2 / (n_slow + 1)
@@ -44,6 +58,8 @@ def simulate(candles: list[list], p: dict, capital: float, fee_pct: float, slip_
     streak, peak, mdd, halted = 0, capital, 0.0, False
     trades, held_bars, reason = [], 0, ""
     reg_sum = 0.0
+    bubble = 0.0
+    lppls_blocked = 0
 
     def sell(i, px, why):
         nonlocal cash, qty, fees, entry, stop, trail_high, last_exit, streak, cooldown_until, reason
@@ -71,6 +87,11 @@ def simulate(candles: list[list], p: dict, capital: float, fee_pct: float, slip_
             reg_sum -= closes[i - n_reg]
         regime = reg_sum / n_reg if i >= n_reg - 1 else None
         warm = i >= max(n_reg, n_slow, n_atr)
+        if use_risk:
+            k = bisect.bisect_right(risk_days, c[0] + bar_ms - DAY_MS) - 1
+            bubble = risk[risk_days[k]] if k >= 0 else 0.0
+        caution = use_risk and bubble >= p.get("lppls_block", 0.5)
+        tighten = use_risk and bubble >= p.get("lppls_tighten", 0.25)
 
         if qty > 0:
             held_bars += 1
@@ -83,12 +104,18 @@ def simulate(candles: list[list], p: dict, capital: float, fee_pct: float, slip_
                     cooldown_until = max(cooldown_until, i + p["crash_cooldown"])
                 elif ef < es or (regime is not None and cl < regime):
                     sell(i, cl, "趋势结束")
+                elif use_risk and bubble >= p.get("lppls_exit", 0.75):
+                    sell(i, cl, "LPPLS 泡沫离场")
                 else:
                     trail_high = max(trail_high, h)
-                    stop = max(stop, trail_high - p["trail_atr_mult"] * atr)
+                    mult = p.get("lppls_trail_atr_mult", 1.5) if tighten else p["trail_atr_mult"]
+                    stop = max(stop, trail_high - mult * atr)
         elif warm and not halted and i >= cooldown_until and i - last_exit >= p["min_bars_between"]:
             spread = (ef - es) / es * 100
-            if regime is not None and cl > regime and spread >= p["min_spread_pct"]:
+            if regime is not None and cl > regime and spread >= p["min_spread_pct"] and caution:
+                lppls_blocked += 1                           # the trend says buy, the bubble filter says no
+                reason = f"LPPLS 泡沫置信度 {bubble:.0%}，暂停开新仓"
+            elif regime is not None and cl > regime and spread >= p["min_spread_pct"]:
                 # Stop distance: ATR-based, but never tighter than min_stop_pct (calm markets would
                 # otherwise size up to all-in) nor wider than hard_stop_pct.
                 dist = min(max(p["atr_stop_mult"] * atr / cl, p["min_stop_pct"] / 100), p["hard_stop_pct"] / 100)
@@ -121,7 +148,7 @@ def simulate(candles: list[list], p: dict, capital: float, fee_pct: float, slip_
     return {
         "in_position": qty > 0, "qty_frac": (qty * closes[-1] / end_eq) if qty and end_eq else 0.0,
         "stop": stop, "entry": entry, "halted": halted,
-        "cooldown_left_bars": max(0, cooldown_until - last), "note": reason,
+        "cooldown_left_bars": max(0, cooldown_until - last), "note": reason, "bubble": bubble,
         "stats": {
             "from": candles[0][0] if candles else None, "to": candles[-1][0] if candles else None,
             "candles": len(candles), "days": round(days, 1),
@@ -134,6 +161,7 @@ def simulate(candles: list[list], p: dict, capital: float, fee_pct: float, slip_
             "fees_usd": round(fees, 2), "fees_pct_of_capital": round(fees / capital * 100, 2),
             "max_drawdown_pct": round(mdd * 100, 2),
             "exits": {r: sum(t["reason"] == r for t in sells) for r in {t["reason"] for t in sells}},
+            "lppls_used": use_risk, "lppls_blocked_bars": lppls_blocked,
         },
         "trades": trades[-20:],
     }

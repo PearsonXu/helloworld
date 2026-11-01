@@ -218,7 +218,12 @@ class StrategyConfig:
                        "trail_atr_mult": 3.0, "min_stop_pct": 3.0, "hard_stop_pct": 6.0,
                        "risk_per_trade_pct": 2.0, "max_position_pct": 50.0, "crash_drop_pct": 8.0,
                        "crash_lookback": 4, "crash_cooldown": 8, "loss_streak": 3, "streak_cooldown": 12,
-                       "min_bars_between": 2, "max_drawdown_pct": 15.0},
+                       "min_bars_between": 2, "max_drawdown_pct": 15.0,
+                       # LPPLS bubble filter (lppls.py): daily fits over several windows.
+                       "use_lppls": True, "lppls_windows": [30, 45, 60, 75, 90, 105, 120],
+                       "lppls_tighten": 0.25, "lppls_block": 0.5, "lppls_exit": 0.75,
+                       "lppls_trail_atr_mult": 1.5,
+                       "lppls_min_r2": 0.8},
     })
 
 
@@ -234,7 +239,7 @@ class EmailConfig:
     to_addr: str = ""                  # where alerts go
     min_level: str = "warning"         # warning | critical
     categories: list[str] = field(default_factory=lambda: [
-        "move1h", "move24h", "depeg", "ivjump", "ivhigh", "funding", "tail_cheap", "dip_fill"])
+        "move1h", "move24h", "depeg", "ivjump", "ivhigh", "funding", "tail_cheap", "dip_fill", "lppls"])
     max_per_hour: int = 4
     lookback_hours: float = 6.0        # ignore older alerts (e.g. right after enabling)
     subject_prefix: str = "[ArbDesk]"

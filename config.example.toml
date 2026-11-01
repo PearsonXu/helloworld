@@ -237,6 +237,15 @@ loss_streak = 3                # 3 losses in a row -> pause 12 bars (3 days)
 streak_cooldown = 12
 min_bars_between = 2
 max_drawdown_pct = 15          # strategy drawdown of 15% -> stop until reset
+# LPPLS bubble filter: daily fits over several windows; confidence = share of windows that
+# look like a bubble. Uses only days that have closed. Panel shows results with and without it.
+use_lppls = true
+lppls_windows = [30, 45, 60, 75, 90, 105, 120]
+lppls_tighten = 0.25           # >= 25%: trailing stop tightens to lppls_trail_atr_mult x ATR
+lppls_block = 0.5              # >= 50%: no new entries
+lppls_exit = 0.75              # >= 75%: exit
+lppls_trail_atr_mult = 1.5
+lppls_min_r2 = 0.8
 
 # ---------------------------------------------------------------------------
 # Email alerts for black-swan events. Password goes in the vault, never here:
@@ -250,5 +259,5 @@ security = "starttls"          # or "ssl" with port 465
 username = ""                  # your email address
 to_addr = ""                   # where to send alerts (can be the same address)
 min_level = "warning"          # or "critical" for only the most severe
-categories = ["move1h", "move24h", "depeg", "ivjump", "ivhigh", "funding", "tail_cheap", "dip_fill"]
+categories = ["move1h", "move24h", "depeg", "ivjump", "ivhigh", "funding", "tail_cheap", "dip_fill", "lppls"]
 max_per_hour = 4
