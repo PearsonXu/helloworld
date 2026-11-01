@@ -4,3 +4,4 @@ uvicorn>=0.29
 openai>=1.40
 python-dotenv>=1.0
 cryptography>=42
+plyer>=2.1; sys_platform == "win32"   # optional desktop notifications for alerts

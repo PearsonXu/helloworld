@@ -126,3 +126,23 @@ max_expiry_gap_days = 45       # contract date must be near a listed option expi
 max_usd_per_bet = 5
 quarterly_budget_usd = 30      # hard cap on all tail bets per calendar quarter (paper and live)
 max_pmus_quotes = 40
+
+# ---------------------------------------------------------------------------
+# Extreme-market alerts: checked with every 5-minute scan, no trading, no AI tokens.
+[alerts]
+enabled = true
+currencies = ["BTC", "ETH"]
+move_1h_pct = 5               # warning at a 5% move within 1 hour...
+critical_move_1h_pct = 12     # ...critical at 12%
+move_24h_pct = 12
+iv_high = 1.0                 # at-the-money implied vol >= 100%
+iv_jump_points = 0.20         # +20 vol points vs 24 hours ago
+funding_8h_abs = 0.0015       # perpetual funding beyond +/-0.15% per 8h
+stablecoins = ["USDT/USD", "USDC/USD"]
+stable_exchange = "kraken"
+depeg_pct = 0.5               # warning beyond 0.5% off $1...
+critical_depeg_pct = 2.0      # ...critical beyond 2%
+outage_consecutive = 3        # a working source failing 3 scans in a row
+cooldown_hours = 6            # same alert isn't repeated within 6 h unless it escalates
+desktop_notify = true         # Windows pop-up (needs plyer, installed by requirements.txt)
+halt_on_critical = true       # critical alert engages the kill switch if any live mode is on

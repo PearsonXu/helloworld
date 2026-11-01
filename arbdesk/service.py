@@ -17,6 +17,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from . import crossvenue, risk, tail
+from .alerts import AlertMonitor
 from .deribit import DeribitClient, build_smiles
 from .config import Settings
 from .llm import Analyst, BudgetExceeded, forecast_markets
@@ -43,6 +44,8 @@ class Desk:
         self.venues: dict[str, Venue] = build_venues(settings)
         self.last_run: dict[str, str] = {}
         self.deribit = DeribitClient()
+        self.last_smiles: dict = {}
+        self.alerts = AlertMonitor(settings, store)
 
     # ------------------------------------------------------------------
     def run_cycle(self, use_llm: bool = True) -> dict:
@@ -64,6 +67,12 @@ class Desk:
                 result["crossvenue"] = self.crossvenue_cycle(use_llm)
             if self.settings.tail.enabled:
                 result["tail"] = self.tail_cycle()
+            if self.settings.alerts.enabled:
+                ok, failed = self._source_health(summary, result)
+                try:
+                    result["alerts"] = len(self.alerts.check(self.last_smiles, ok, failed))
+                except Exception as e:
+                    log.warning("alert check failed: %s", e)
             if use_llm:
                 result["pruned_scans"] = self.store.prune_scans()
             self.last_run["scan"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -73,6 +82,15 @@ class Desk:
         finally:
             self.running = False
             self._lock.release()
+
+    def _source_health(self, crypto_summary: dict, result: dict) -> tuple[set[str], set[str]]:
+        """Which data sources worked in this cycle (for outage alerts)."""
+        ok = {f"{ex}:spot" for ex in crypto_summary.get("exchanges_ok", [])}
+        ok |= {f"{ex}:funding" for ex in crypto_summary.get("funding_ok", [])}
+        failed = set(crypto_summary.get("errors", {}))
+        for name in self.venues:
+            (failed if isinstance(result.get(name), dict) and "error" in result[name] else ok).add(name)
+        return ok, failed
 
     def _ai_ready(self) -> str | None:
         """Reason the AI can't run right now, or None."""
@@ -306,6 +324,7 @@ class Desk:
                 smiles[ccy] = build_smiles(self.deribit.option_summaries(ccy))
             except Exception as e:
                 errors[f"deribit:{ccy}"] = f"{type(e).__name__}: {str(e)[:150]}"
+        self.last_smiles = smiles  # reused by the volatility alert
         contracts = []
         if "kalshi" in cfg.venues and "kalshi" in self.venues:
             k = self.venues["kalshi"]

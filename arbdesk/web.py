@@ -115,6 +115,18 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
                         "forecasts": store.forecasts(30, venue=name), "scores": store.forecast_scores(name)})
         return out
 
+    @app.get("/api/alerts", dependencies=[Depends(auth)])
+    def alerts_view(limit: int = 30):
+        return {"enabled": settings.alerts.enabled, "unacked": store.alerts(20, unacked_only=True),
+                "recent": store.alerts(min(limit, 100))}
+
+    @app.post("/api/alerts/ack", dependencies=[Depends(auth), Depends(json_only)])
+    async def alerts_ack(request: Request):
+        body = await request.json()
+        aid = body.get("id") if isinstance(body, dict) else None
+        store.ack_alerts(int(aid) if aid is not None else None)
+        return {"ok": True}
+
     @app.get("/api/tail", dependencies=[Depends(auth)])
     def tail_view():
         latest = store.scans(1, source="tail")

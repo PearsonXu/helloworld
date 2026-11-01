@@ -145,6 +145,27 @@ class TailConfig:
     max_pmus_quotes: int = 40          # Polymarket US crypto markets quoted per scan
 
 
+@dataclass
+class AlertConfig:
+    """Extreme-market alerts (no trading)."""
+    enabled: bool = True
+    currencies: list[str] = field(default_factory=lambda: ["BTC", "ETH"])
+    move_1h_pct: float = 5.0
+    critical_move_1h_pct: float = 12.0
+    move_24h_pct: float = 12.0
+    iv_high: float = 1.0                # ATM implied vol >= 100%
+    iv_jump_points: float = 0.20        # +20 vol points vs 24h ago
+    funding_8h_abs: float = 0.0015      # |funding| >= 0.15% per 8h (~160% APR)
+    stablecoins: list[str] = field(default_factory=lambda: ["USDT/USD", "USDC/USD"])
+    stable_exchange: str = "kraken"     # public tickers, US-accessible
+    depeg_pct: float = 0.5
+    critical_depeg_pct: float = 2.0
+    outage_consecutive: int = 3         # scans in a row before an outage alert
+    cooldown_hours: float = 6.0         # same alert not repeated within this window (unless it escalates)
+    desktop_notify: bool = True         # Windows/macOS toast via plyer, if installed
+    halt_on_critical: bool = True       # critical alert engages the kill switch when any live mode is on
+
+
 # Venue-specific defaults on top of VenueConfig's.
 KALSHI_DEFAULTS = {"environment": "demo", "min_liquidity_usd": 500}
 PMUS_DEFAULTS = {"min_liquidity_usd": 1000}
@@ -161,6 +182,7 @@ class Settings:
     data_dir: Path
     crossvenue: CrossVenueConfig = field(default_factory=CrossVenueConfig)
     tail: TailConfig = field(default_factory=TailConfig)
+    alerts: AlertConfig = field(default_factory=AlertConfig)
     kalshi: VenueConfig = field(default_factory=lambda: VenueConfig(**KALSHI_DEFAULTS))
     polymarket_us: VenueConfig = field(default_factory=lambda: VenueConfig(**PMUS_DEFAULTS))
 
@@ -250,6 +272,7 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         data_dir=data_dir,
         crossvenue=CrossVenueConfig(**raw.get("crossvenue", {})),
         tail=TailConfig(**raw.get("tail", {})),
+        alerts=AlertConfig(**raw.get("alerts", {})),
         kalshi=VenueConfig(**{**KALSHI_DEFAULTS, **raw.get("kalshi", {})}),
         polymarket_us=VenueConfig(**{**PMUS_DEFAULTS, **raw.get("polymarket_us", {})}),
     )

@@ -69,6 +69,22 @@ CREATE TABLE IF NOT EXISTS pair_matches (
     confidence REAL,
     reason TEXT
 );
+CREATE TABLE IF NOT EXISTS samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    key TEXT NOT NULL,              -- e.g. price:BTC, iv:ETH
+    value REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS samples_key_ts ON samples (key, ts);
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    key TEXT NOT NULL,
+    level TEXT NOT NULL,            -- info / warning / critical
+    title TEXT NOT NULL,
+    detail TEXT,
+    acked INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS flags (
     name TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -232,6 +248,50 @@ class Store:
             "SELECT COALESCE(SUM(t.cost_usd + t.fee_usd), 0) AS s FROM trades t "
             "JOIN proposals p ON p.id = t.proposal_id "
             "WHERE json_extract(p.payload, '$.kind') = 'tail' AND t.ts >= ?", (self.quarter_start(),))[0]["s"]
+
+    # market samples (for change-over-time alerts) -----------------------
+    def add_sample(self, key: str, value: float) -> None:
+        self._insert("INSERT INTO samples (ts, key, value) VALUES (?, ?, ?)", (now_iso(), key, value))
+
+    def sample_near(self, key: str, hours: float) -> float | None:
+        """Value recorded closest to `hours` ago, if one exists within a tolerance window."""
+        target = datetime.now(timezone.utc) - timedelta(hours=hours)
+        tol = timedelta(minutes=max(10.0, hours * 60 * 0.25))
+        rows = self._rows("SELECT ts, value FROM samples WHERE key = ? AND ts BETWEEN ? AND ?",
+                          (key, (target - tol).isoformat(timespec="seconds"), (target + tol).isoformat(timespec="seconds")))
+        if not rows:
+            return None
+        best = min(rows, key=lambda r: abs((datetime.fromisoformat(r["ts"]) - target).total_seconds()))
+        return best["value"]
+
+    def prune_samples(self, keep_days: float = 3.0) -> None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat(timespec="seconds")
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+
+    # alerts ---------------------------------------------------------------
+    LEVELS = {"info": 0, "warning": 1, "critical": 2}
+
+    def alert_recent(self, key: str, hours: float, level: str) -> bool:
+        """True if this alert already fired within the cooldown at the same or a higher level."""
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+        rows = self._rows("SELECT level FROM alerts WHERE key = ? AND ts >= ?", (key, since))
+        return any(self.LEVELS.get(r["level"], 0) >= self.LEVELS.get(level, 0) for r in rows)
+
+    def add_alert(self, key: str, level: str, title: str, detail: str) -> int:
+        return self._insert("INSERT INTO alerts (ts, key, level, title, detail) VALUES (?, ?, ?, ?, ?)",
+                            (now_iso(), key, level, title, detail))
+
+    def alerts(self, limit: int = 50, unacked_only: bool = False) -> list[dict]:
+        where = "WHERE acked = 0" if unacked_only else ""
+        return self._rows(f"SELECT * FROM alerts {where} ORDER BY id DESC LIMIT ?", (limit,))
+
+    def ack_alerts(self, alert_id: int | None = None) -> None:
+        with self.lock, self.conn:
+            if alert_id is None:
+                self.conn.execute("UPDATE alerts SET acked = 1 WHERE acked = 0")
+            else:
+                self.conn.execute("UPDATE alerts SET acked = 1 WHERE id = ?", (alert_id,))
 
     # maintenance --------------------------------------------------------
     def prune_scans(self, keep_days: float = 2.0) -> int:

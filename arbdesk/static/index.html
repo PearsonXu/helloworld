@@ -55,6 +55,11 @@
   <button id="halt" class="danger">紧急停止实盘</button>
 </header>
 <main>
+  <section id="alertBanner" style="display:none">
+    <div class="row"><h2 style="margin:0">⚠️ 行情提醒</h2><span style="flex:1"></span>
+      <button class="ghost" id="ackAll">全部已读</button></div>
+    <div id="alertList" style="margin-top:8px"></div>
+  </section>
   <section id="haltBanner" style="display:none;border-color:var(--bad)">
     <h2 class="bad">实盘已停止</h2><p id="haltReason"></p>
     <button id="resume" class="ghost">确认已检查，恢复实盘</button>

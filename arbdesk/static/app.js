@@ -114,6 +114,7 @@ async function refresh() {
   await renderVenues();
   await renderCross();
   await renderTail();
+  await renderAlerts();
 
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
@@ -161,6 +162,18 @@ async function renderVenues() {
   }).join("");
 }
 
+async function renderAlerts() {
+  const a = await api("/api/alerts");
+  const list = a.unacked || [];
+  $("alertBanner").style.display = a.enabled && list.length ? "" : "none";
+  const color = { critical: "bad", warning: "warn", info: "muted" };
+  $("alertList").innerHTML = list.map((x) => `<div class="card"><div class="row">
+      <b class="${color[x.level] || ""}">${x.level === "critical" ? "严重" : x.level === "warning" ? "注意" : "提示"} · ${esc(x.title)}</b>
+      <span class="muted">${esc(x.ts.slice(0, 16))}</span><span style="flex:1"></span>
+      <button class="ghost" data-ack="${x.id}">已读</button></div>
+      <div class="muted">${esc(x.detail)}</div></div>`).join("");
+}
+
 async function renderTail() {
   const t = await api("/api/tail");
   $("tailSection").style.display = t.enabled ? "" : "none";
@@ -206,6 +219,8 @@ async function renderCross() {
 }
 
 document.addEventListener("click", async (e) => {
+  const ack = e.target.closest("button[data-ack]");
+  if (ack) { await api("/api/alerts/ack", { id: Number(ack.dataset.ack) }); return refresh(); }
   const b = e.target.closest("button[data-act]");
   if (!b) return;
   const { act, id } = b.dataset;
@@ -226,6 +241,7 @@ document.addEventListener("click", async (e) => {
   refresh();
 });
 $("run").onclick = () => api("/api/run", { use_llm: true }).then(refresh);
+$("ackAll").onclick = () => api("/api/alerts/ack", {}).then(refresh);
 $("halt").onclick = () => confirm("立即停止所有实盘下单？") && api("/api/halt", {}).then(refresh);
 $("resume").onclick = () => confirm("确认已在交易所 / 预测市场检查过持仓，恢复实盘？") && api("/api/resume", {}).then(refresh);
 $("runScan").onclick = () => api("/api/run", { use_llm: false }).then(refresh);

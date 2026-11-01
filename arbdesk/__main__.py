@@ -110,6 +110,8 @@ def main() -> None:
     vp.add_argument("name", choices=VENUES)
     vp.add_argument("--no-llm", action="store_true")
     sub.add_parser("tail", help="price crypto threshold contracts against Deribit options once")
+    al = sub.add_parser("alerts", help="run the extreme-market checks once and list recent alerts")
+    al.add_argument("--ack", action="store_true", help="mark all alerts as read")
     pmp = sub.add_parser("polymarket", help="same as: venue polymarket")
     pmp.add_argument("--no-llm", action="store_true")
     sub.add_parser("proposals", help="list proposals")
@@ -183,6 +185,16 @@ def main() -> None:
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
     elif args.cmd == "scan":
         print(json.dumps(desk.run_cycle(use_llm=not args.no_llm), ensure_ascii=False, indent=2))
+    elif args.cmd == "alerts":
+        if args.ack:
+            store.ack_alerts()
+        else:
+            if settings.tail.enabled:
+                desk.tail_cycle()  # fills the option smiles used by the volatility check
+            fired = desk.alerts.check(desk.last_smiles)
+            print(f"new alerts this run: {len(fired)}")
+            for a in store.alerts(15):
+                print(f"{a['ts'][:16]}  {a['level']:8} {'  ' if a['acked'] else '* '}{a['title']} — {a['detail']}")
     elif args.cmd == "tail":
         if "polymarket_us" in desk.venues:  # its contracts come from the latest venue scan
             try:
