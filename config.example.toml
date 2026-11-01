@@ -183,3 +183,50 @@ usd_per_level = 5
 capital = 150
 hours = 24
 auto_execute = true
+
+# ---------------------------------------------------------------------------
+# Strategy lab: classic BTC/ETH spot strategies paper-traded on live candles.
+# Each strategy x symbol has its own virtual wallet (separate from [sim]). Paper only.
+[strategies]
+enabled = ["dca", "sma_cross", "donchian", "rsi"]
+exchange = "coinbase"
+symbols = ["BTC/USD", "ETH/USD"]
+capital_per_strategy = 25
+fee_pct = 0.6                  # per fill; check your exchange fee tier
+slippage_pct = 0.05
+
+[strategies.params.dca]
+timeframe = "1d"
+every_days = 7
+amount_usd = 5
+
+[strategies.params.sma_cross]
+timeframe = "1d"
+fast = 20
+slow = 50
+
+[strategies.params.donchian]
+timeframe = "1d"
+entry = 20                     # buy on a close above the 20-day high
+exit = 10                      # sell on a close below the 10-day low
+
+[strategies.params.rsi]
+timeframe = "1h"
+period = 14
+buy_below = 30
+sell_above = 70
+
+# ---------------------------------------------------------------------------
+# Email alerts for black-swan events. Password goes in the vault, never here:
+#   python -m arbdesk vault set SMTP_PASSWORD     (Gmail: an App Password)
+# Then: python -m arbdesk email test
+[email]
+enabled = false
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+security = "starttls"          # or "ssl" with port 465
+username = ""                  # your email address
+to_addr = ""                   # where to send alerts (can be the same address)
+min_level = "warning"          # or "critical" for only the most severe
+categories = ["move1h", "move24h", "depeg", "ivjump", "ivhigh", "funding", "tail_cheap", "dip_fill"]
+max_per_hour = 4

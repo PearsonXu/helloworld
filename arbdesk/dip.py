@@ -50,6 +50,10 @@ class DipMarket:
         t = self.ex.fetch_ticker(symbol)
         return float(t.get("last") or t.get("close"))
 
+    def ohlcv(self, symbol: str, timeframe: str, limit: int = 300) -> list[list]:
+        """[[ts_ms, open, high, low, close, volume], ...] oldest first."""
+        return self.ex.fetch_ohlcv(symbol, timeframe, limit=limit)
+
     def low_since(self, symbol: str, since_ms: int) -> float | None:
         """Lowest traded price since `since_ms` from 1-minute candles."""
         candles = self.ex.fetch_ohlcv(symbol, "1m", since=since_ms, limit=300)

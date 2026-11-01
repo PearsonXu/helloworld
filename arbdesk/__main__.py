@@ -128,6 +128,10 @@ def main() -> None:
     vp.add_argument("name", choices=VENUES)
     vp.add_argument("--no-llm", action="store_true")
     sub.add_parser("tail", help="price crypto threshold contracts against Deribit options once")
+    em = sub.add_parser("email", help="email alerts: test | status")
+    em.add_argument("action", choices=["test", "status"])
+    stp = sub.add_parser("strategies", help="strategy lab: status | run | reset")
+    stp.add_argument("action", choices=["status", "run", "reset"])
     sm = sub.add_parser("sim", help="simulated account: start [--capital N --hours H] | status | stop | report [ID]")
     sm.add_argument("action", choices=["start", "status", "stop", "report"])
     sm.add_argument("id", nargs="?", type=int)
@@ -221,6 +225,26 @@ def main() -> None:
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
     elif args.cmd == "scan":
         print(json.dumps(desk.run_cycle(use_llm=not args.no_llm), ensure_ascii=False, indent=2))
+    elif args.cmd == "email":
+        if args.action == "test":
+            print(json.dumps(desk.email.send_test(), ensure_ascii=False, indent=2))
+        else:
+            p_ = desk.email.problems()
+            print("email alerts:", "ready" if not p_ else "not ready — " + "; ".join(p_))
+            for e in store.email_log(10):
+                print(f"  {e['ts'][:16]} {'ok ' if e['ok'] else 'ERR'} {e['subject']}" + (f" — {e['error']}" if e["error"] else ""))
+    elif args.cmd == "strategies":
+        if args.action == "reset":
+            desk.lab.reset()
+            print("strategy lab reset; it restarts on the next run")
+        if args.action == "run":
+            print(json.dumps(desk.lab.tick(), ensure_ascii=False, indent=2, default=str))
+        for r in desk.lab.status()["rows"]:
+            bt = r["backtest"]
+            print(f"{r['label']:<14} {r['symbol']:8} {r['position']:3} equity ${r['equity'] or 0:7.2f} "
+                  f"({(r['return_pct'] or 0):+6.2f}%, hold {(r['buy_hold_pct'] or 0):+6.2f}%) trades {r['trades']:>3} | "
+                  f"backtest {bt.get('return_pct', 0):+7.2f}% vs hold {bt.get('buy_hold_pct', 0):+7.2f}%, "
+                  f"maxDD {bt.get('max_drawdown_pct', 0):.1f}%, {bt.get('trades', 0)} trades, {bt.get('candles', 0)} candles")
     elif args.cmd == "sim":
         def show(r):
             if not r:

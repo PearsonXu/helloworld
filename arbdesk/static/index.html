@@ -58,6 +58,7 @@
   <section id="alertBanner" style="display:none">
     <div class="row"><h2 style="margin:0">⚠️ 行情提醒</h2><span style="flex:1"></span>
       <button class="ghost" id="ackAll">全部已读</button></div>
+    <div class="muted" id="emailStatus"></div>
     <div id="alertList" style="margin-top:8px"></div>
   </section>
   <section id="simSection">
@@ -83,7 +84,8 @@
     <p class="muted" id="riskline"></p>
   </section>
   <section>
-    <h2>待审批建议 <span class="muted">（AI 只能提议，执行必须你点"批准"，且再过一遍硬性风控）</span></h2>
+    <div class="row"><h2 style="margin:0">待审批建议 <span class="muted">（AI 只能提议，执行必须你点"批准"，且再过一遍硬性风控）</span></h2>
+      <span style="flex:1"></span><button class="ghost" id="propRefresh">刷新</button></div>
     <div id="proposals"></div>
   </section>
   <section>
@@ -96,6 +98,13 @@
       <tbody id="opps"></tbody></table>
   </section>
   <div id="venues" style="display:grid;gap:16px"></div>
+  <section id="stratSection">
+    <div class="row"><h2 style="margin:0">策略实盘模拟 <span class="muted">（实时行情 + 虚拟资金，每个策略每个币种独立账本；只做多现货，不下真实订单）</span></h2>
+      <span style="flex:1"></span><button class="danger" id="stratReset">重置</button></div>
+    <table style="margin-top:10px"><thead><tr><th>策略</th><th>币种</th><th>状态</th><th>账户值</th><th>收益</th><th>同期持有</th><th>最大回撤</th><th>交易</th><th>回测（近期历史）</th></tr></thead>
+      <tbody id="stratrows"></tbody></table>
+    <p class="muted" id="stratnote"></p>
+  </section>
   <section id="dipSection">
     <div class="row"><h2 style="margin:0">抄底挂单 <span class="muted" id="dipmeta"></span></h2><span style="flex:1"></span>
       <button class="ghost" id="dipArm">重新布置挂单</button> <button class="danger" id="dipCancel">撤销全部挂单</button></div>

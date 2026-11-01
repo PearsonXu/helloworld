@@ -127,3 +127,17 @@ def test_panel_auth_and_host(settings, store):
     assert c.post("/api/run", data={"a": "1"}).status_code == 415
     evil = TestClient(app, base_url="http://evil.example")
     assert evil.get("/").status_code == 403
+
+
+def test_revalidate_updates_pending_notes(settings, store):
+    desk = Desk(settings, store)
+    app = create_app(settings, store, desk, Executor(settings, store), token="tok")
+    c = TestClient(app, base_url="http://127.0.0.1")
+    c.get("/?token=tok", follow_redirects=False)
+    ok = {"legs": [{"exchange": "okx", "symbol": "BTC/USDT", "side": "buy", "usd": 20}]}
+    pid = store.add_proposal(None, ok, note="stale note")
+    assert c.post("/api/proposals/revalidate", json={}).json()["checked"] == 1
+    assert store.proposal(pid)["note"] == ""                          # passes now
+    settings.risk.max_per_trade_usd = 10
+    c.post("/api/proposals/revalidate", json={})
+    assert "outside" in store.proposal(pid)["note"] and store.proposal(pid)["status"] == "pending"

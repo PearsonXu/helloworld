@@ -191,7 +191,22 @@ class SimAccount:
         }
         if record and s["status"] == "running":
             self.store.add_sample(f"sim_equity:{s['id']}", equity)
+            # The panel shows this cached copy: valuing positions needs network quotes.
+            self.store.set_flag(f"sim_snapshot:{s['id']}", json.dumps(snap, ensure_ascii=False, default=str))
         return snap
+
+    def cached_snapshot(self, s: dict) -> dict:
+        """Last snapshot taken by a scan (prices included); recomputed from the ledger at cost if none yet."""
+        f = self.store.get_flag(f"sim_snapshot:{s['id']}")
+        if f and f["value"]:
+            snap = json.loads(f["value"])
+            snap["as_of"] = f["ts"]
+            return snap
+        desk, self.desk = self.desk, None  # no network: positions valued at cost until the next scan
+        try:
+            return self.snapshot(s, record=False)
+        finally:
+            self.desk = desk
 
     # ------------------------------------------------------------------
     def tick(self) -> dict | None:

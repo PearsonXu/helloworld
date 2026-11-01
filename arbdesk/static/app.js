@@ -117,6 +117,7 @@ async function refresh() {
   await renderAlerts();
   await renderDip();
   await renderSim();
+  await renderStrategies();
 
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
@@ -164,6 +165,21 @@ async function renderVenues() {
   }).join("");
 }
 
+async function renderStrategies() {
+  const d = await api("/api/strategies");
+  $("stratSection").style.display = d.enabled.length ? "" : "none";
+  const pct = (v) => v == null ? "—" : `<span class="${v >= 0 ? "good" : "bad"}">${v >= 0 ? "+" : ""}${num(v)}%</span>`;
+  $("stratrows").innerHTML = d.rows.map((r) => {
+    const bt = r.backtest || {};
+    const days = bt.from ? Math.round((bt.to - bt.from) / 86400000) : 0;
+    return `<tr><td>${esc(r.label)}</td><td>${esc(r.symbol)}</td><td>${esc(r.position)}</td>
+      <td>$${num(r.equity)}</td><td>${pct(r.return_pct)}</td><td>${pct(r.buy_hold_pct)}</td>
+      <td>${num(r.max_dd_pct, 1)}%</td><td>${r.trades}</td>
+      <td>${bt.return_pct == null ? "—" : `${pct(bt.return_pct)} vs 持有 ${pct(bt.buy_hold_pct)} · 回撤 ${num(bt.max_drawdown_pct, 1)}% · ${bt.trades} 笔 · ${days} 天`}</td></tr>`;
+  }).join("") || `<tr><td colspan="9" class="muted">下一次扫描时自动开始（每个策略每个币种 $25 虚拟资金）</td></tr>`;
+  $("stratnote").textContent = `手续费 ${d.fee_pct}% + 滑点 ${d.slippage_pct}%/笔；信号只用已收盘的 K 线。回测用同一套规则跑最近的历史行情，只代表过去；"同期持有"是同一时段一直持有不动的收益，用来对比策略有没有价值。`;
+}
+
 async function renderSim() {
   const d = await api("/api/sim");
   const r = d.snapshot;
@@ -193,7 +209,8 @@ async function renderSim() {
   $("simline").textContent = `已实现 ${num(r.realized)} · 浮动 ${num(r.unrealized)} · 手续费 ${num(r.fees)} · AI 花费 $${num(r.ai_cost_usd, 4)}（${r.ai_tokens} token）` +
     (pts.length ? ` · 期间最高 $${num(Math.max(...pts))} / 最低 $${num(Math.min(...pts))}` : "") +
     (r.unpriced_positions ? ` · ${r.unpriced_positions} 个持仓暂无报价，按成本估值` : "") +
-    (r.reason ? ` · 结束原因：${r.reason}` : "");
+    (r.reason ? ` · 结束原因：${r.reason}` : "") +
+    (r.as_of ? ` · 估值时间 ${r.as_of.slice(11, 16)} UTC（每次扫描更新）` : "");
   $("simstrats").innerHTML = r.by_strategy.map((b) => `<tr><td>${esc(b.label)}</td><td>${b.trades}</td>
     <td>${num(b.spent)}</td><td class="${cls(b.realized)}">${num(b.realized)}</td>
     <td class="${cls(b.unrealized || 0)}">${num(b.unrealized || 0)}</td><td>${num(b.fees)}</td></tr>`).join("")
@@ -226,6 +243,10 @@ async function renderAlerts() {
   const a = await api("/api/alerts");
   const list = a.unacked || [];
   $("alertBanner").style.display = a.enabled && list.length ? "" : "none";
+  const em = a.email || {};
+  $("emailStatus").textContent = !em.enabled ? "邮件提醒：未开启（见 README「邮件提醒」）"
+    : em.problems.length ? `邮件提醒：配置不完整 — ${em.problems.join("；")}`
+    : `邮件提醒：已开启` + (em.last ? ` · 最近一封 ${em.last.ts.slice(0, 16)} ${em.last.ok ? "成功" : "失败：" + (em.last.error || "")}` : "");
   const color = { critical: "bad", warning: "warn", info: "muted" };
   $("alertList").innerHTML = list.map((x) => `<div class="card"><div class="row">
       <b class="${color[x.level] || ""}">${x.level === "critical" ? "严重" : x.level === "warning" ? "注意" : "提示"} · ${esc(x.title)}</b>
@@ -301,6 +322,14 @@ document.addEventListener("click", async (e) => {
   refresh();
 });
 $("run").onclick = () => api("/api/run", { use_llm: true }).then(refresh);
+$("propRefresh").onclick = async () => {
+  const b = $("propRefresh");
+  b.disabled = true; b.textContent = "检查中…";
+  try { await api("/api/proposals/revalidate", {}); await refresh(); }
+  catch (e) { alert(e.message); }
+  finally { b.disabled = false; b.textContent = "刷新"; }
+};
+$("stratReset").onclick = () => confirm("清空所有策略的模拟账本，从下一次扫描重新开始？") && api("/api/strategies/reset", {}).then(refresh);
 $("simStart").onclick = async () => {
   const d = await api("/api/sim");
   const capital = prompt("模拟初始资金（美元）：", d.defaults.capital);

@@ -21,6 +21,8 @@ from .alerts import AlertMonitor
 from .dip import DipManager
 from .executor import Executor
 from .sim import SimAccount
+from .strategies import StrategyLab
+from .notify_email import EmailNotifier
 from .deribit import DeribitClient, build_smiles
 from .config import Settings
 from .llm import Analyst, BudgetExceeded, forecast_markets
@@ -52,6 +54,8 @@ class Desk:
         self.dip = DipManager(settings, store)
         self.executor = Executor(settings, store)
         self.sim = SimAccount(settings, store, self)
+        self.lab = StrategyLab(settings, store)
+        self.email = EmailNotifier(settings, store)
         # While a simulation runs, paper execution and dip arming are limited to its available cash.
         self.executor.sim_available = self.sim.available
         self.dip.sim_available = self.sim.available
@@ -81,6 +85,11 @@ class Desk:
                     result["dip"] = self.dip.cycle()
                 except Exception as e:
                     log.warning("dip ladder cycle failed: %s", e)
+            if self.settings.strategies.enabled:
+                try:
+                    result["strategies"] = self.lab.tick()
+                except Exception as e:
+                    log.warning("strategy lab failed: %s", e)
             if self.sim.current():
                 try:
                     result["sim"] = self.sim_step()
@@ -92,6 +101,11 @@ class Desk:
                     result["alerts"] = len(self.alerts.check(self.last_smiles, ok, failed))
                 except Exception as e:
                     log.warning("alert check failed: %s", e)
+            if self.settings.email.enabled:  # last, so it sees every alert raised in this cycle
+                try:
+                    result["email"] = self.email.run()
+                except Exception as e:
+                    log.warning("email alerts failed: %s", e)
             if use_llm:
                 result["pruned_scans"] = self.store.prune_scans()
             self.last_run["scan"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -402,6 +416,11 @@ class Desk:
                              "rows": [r for r in rows if r["price"] <= 0.5][:40], "spent_quarter": spent,
                              "budget_quarter": cfg.quarterly_budget_usd}, cheap, "tail")
         for r in cheap[:3]:
+            key = f"tail_cheap:{r['venue']}:{r['market_id']}:{r['side']}"
+            if not self.store.alert_recent(key, hours=24, level="warning"):
+                self.store.add_alert(key, "warning", f"发现便宜的黑天鹅彩票：{r['label'][:60]} 买 {r['side']}",
+                                     f"合约 {r['price'] * 100:.1f}¢，期权反推概率 {r['implied'] * 100:.1f}%"
+                                     f"（{r['ratio']}倍），{r['expiry'][:10]} 到期。已生成待审批建议。")
             shares = max(r["min_size"], float(int(cfg.max_usd_per_bet / r["price"])))
             payload = {
                 "kind": "tail",

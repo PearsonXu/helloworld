@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
+from . import risk
 from .config import Settings
 from .executor import Executor
 from .service import Desk
@@ -118,7 +119,9 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
     @app.get("/api/alerts", dependencies=[Depends(auth)])
     def alerts_view(limit: int = 30):
         return {"enabled": settings.alerts.enabled, "unacked": store.alerts(20, unacked_only=True),
-                "recent": store.alerts(min(limit, 100))}
+                "recent": store.alerts(min(limit, 100)),
+                "email": {"enabled": settings.email.enabled, "problems": desk.email.problems(),
+                          "last": (store.email_log(1) or [None])[0]}}
 
     @app.post("/api/alerts/ack", dependencies=[Depends(auth), Depends(json_only)])
     async def alerts_ack(request: Request):
@@ -178,12 +181,33 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
             desk.dip.cancel_all()
         return {"ok": True}
 
+    @app.post("/api/proposals/revalidate", dependencies=[Depends(auth), Depends(json_only)])
+    def revalidate():
+        """Re-run the risk checks on every pending proposal (limits, budgets, halts may have changed)."""
+        n = 0
+        for p in store.proposals(200):
+            if p["status"] != "pending":
+                continue
+            _, errors = risk.validate(p["payload"], settings, store)
+            store.set_proposal_status(p["id"], "pending", "; ".join(errors))
+            n += 1
+        return {"checked": n}
+
+    @app.get("/api/strategies", dependencies=[Depends(auth)])
+    def strategies_view():
+        return desk.lab.status()
+
+    @app.post("/api/strategies/reset", dependencies=[Depends(auth), Depends(json_only)])
+    def strategies_reset():
+        desk.lab.reset()
+        return {"ok": True}
+
     @app.get("/api/sim", dependencies=[Depends(auth)])
     def sim_view():
         cur = desk.sim.current()
         hist = store.sims(10)
         if cur:
-            snap = desk.sim.snapshot(cur, record=False)  # sync endpoint: runs in FastAPI's threadpool
+            snap = desk.sim.cached_snapshot(cur)  # refreshed by every scan; no network calls here
         elif hist:
             snap = desk.sim.report(hist[0]["id"])
         else:

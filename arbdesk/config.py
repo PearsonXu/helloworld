@@ -114,10 +114,12 @@ class Secrets:
     kalshi_private_key: str = ""    # PEM, vault only
     pmus_key_id: str = ""
     pmus_secret_key: str = ""       # base64 Ed25519, vault only
+    smtp_password: str = ""         # vault only
     source: str = "env"             # "env", "vault" or "vault+env"
 
     def all_values(self) -> list[str]:
-        vals = [self.llm_api_key, self.pm_private_key, self.kalshi_private_key, self.pmus_secret_key]
+        vals = [self.llm_api_key, self.pm_private_key, self.kalshi_private_key, self.pmus_secret_key,
+                self.smtp_password]
         for creds in self.exchange_keys.values():
             vals.extend(creds.values())
         return [v for v in vals if v and len(v) >= 6]
@@ -196,6 +198,41 @@ class SimConfig:
     auto_execute: bool = True      # execute passing paper proposals automatically while a session runs
 
 
+@dataclass
+class StrategyConfig:
+    """Strategy lab: classic BTC/ETH spot strategies, paper-traded on live candles."""
+    enabled: list[str] = field(default_factory=lambda: ["dca", "sma_cross", "donchian", "rsi"])
+    exchange: str = "coinbase"
+    symbols: list[str] = field(default_factory=lambda: ["BTC/USD", "ETH/USD"])
+    capital_per_strategy: float = 25.0  # virtual $ per strategy and symbol (separate from the sim account)
+    fee_pct: float = 0.6                # per fill; Coinbase's entry-tier fees can be higher, check yours
+    slippage_pct: float = 0.05
+    params: dict = field(default_factory=lambda: {
+        "dca": {"timeframe": "1d", "every_days": 7, "amount_usd": 5.0},
+        "sma_cross": {"timeframe": "1d", "fast": 20, "slow": 50},
+        "donchian": {"timeframe": "1d", "entry": 20, "exit": 10},
+        "rsi": {"timeframe": "1h", "period": 14, "buy_below": 30, "sell_above": 70},
+    })
+
+
+@dataclass
+class EmailConfig:
+    """Email digests for black-swan alerts. Password: `vault set SMTP_PASSWORD` (Gmail: App Password)."""
+    enabled: bool = False
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    security: str = "starttls"         # "starttls" (port 587) or "ssl" (port 465)
+    username: str = ""                 # usually your email address
+    from_addr: str = ""                # defaults to username
+    to_addr: str = ""                  # where alerts go
+    min_level: str = "warning"         # warning | critical
+    categories: list[str] = field(default_factory=lambda: [
+        "move1h", "move24h", "depeg", "ivjump", "ivhigh", "funding", "tail_cheap", "dip_fill"])
+    max_per_hour: int = 4
+    lookback_hours: float = 6.0        # ignore older alerts (e.g. right after enabling)
+    subject_prefix: str = "[ArbDesk]"
+
+
 # Venue-specific defaults on top of VenueConfig's.
 KALSHI_DEFAULTS = {"environment": "demo", "min_liquidity_usd": 500}
 PMUS_DEFAULTS = {"min_liquidity_usd": 1000}
@@ -215,6 +252,8 @@ class Settings:
     alerts: AlertConfig = field(default_factory=AlertConfig)
     dip: DipConfig = field(default_factory=DipConfig)
     sim: SimConfig = field(default_factory=SimConfig)
+    strategies: StrategyConfig = field(default_factory=StrategyConfig)
+    email: EmailConfig = field(default_factory=EmailConfig)
     kalshi: VenueConfig = field(default_factory=lambda: VenueConfig(**KALSHI_DEFAULTS))
     polymarket_us: VenueConfig = field(default_factory=lambda: VenueConfig(**PMUS_DEFAULTS))
 
@@ -235,7 +274,7 @@ def _check_private(path: Path) -> None:
         log.warning("%s is readable by other users; run: chmod 600 %s", path.name, path)
 
 
-VAULT_ONLY = ("POLYMARKET_PRIVATE_KEY", "KALSHI_PRIVATE_KEY", "POLYMARKET_US_SECRET_KEY")
+VAULT_ONLY = ("POLYMARKET_PRIVATE_KEY", "KALSHI_PRIVATE_KEY", "POLYMARKET_US_SECRET_KEY", "SMTP_PASSWORD")
 
 
 def _load_secrets(env_path: Path, vault_data: dict[str, str] | None = None) -> Secrets:
@@ -279,8 +318,18 @@ def _load_secrets(env_path: Path, vault_data: dict[str, str] | None = None) -> S
         kalshi_private_key=env.get("KALSHI_PRIVATE_KEY") or "",
         pmus_key_id=env.get("POLYMARKET_US_KEY_ID") or "",
         pmus_secret_key=env.get("POLYMARKET_US_SECRET_KEY") or "",
+        smtp_password=env.get("SMTP_PASSWORD") or "",
         source=source,
     )
+
+
+def _strategy_config(raw: dict) -> StrategyConfig:
+    """Per-strategy params from config.toml are merged over the defaults, key by key."""
+    base = StrategyConfig()
+    params = {k: dict(v) for k, v in base.params.items()}
+    for k, v in (raw.get("params") or {}).items():
+        params.setdefault(k, {}).update(v)
+    return StrategyConfig(**{**{k: v for k, v in raw.items() if k != "params"}, "params": params})
 
 
 def load_settings(config_path: Path | None = None, env_path: Path | None = None,
@@ -307,6 +356,8 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         alerts=AlertConfig(**raw.get("alerts", {})),
         dip=DipConfig(**raw.get("dip", {})),
         sim=SimConfig(**raw.get("sim", {})),
+        strategies=_strategy_config(raw.get("strategies", {})),
+        email=EmailConfig(**raw.get("email", {})),
         kalshi=VenueConfig(**{**KALSHI_DEFAULTS, **raw.get("kalshi", {})}),
         polymarket_us=VenueConfig(**{**PMUS_DEFAULTS, **raw.get("polymarket_us", {})}),
     )
@@ -316,6 +367,8 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         vc = settings.venue_cfg(name)
         if vc.mode not in ("paper", "live"):
             raise ValueError(f"{name}.mode must be 'paper' or 'live'")
+    if settings.email.security not in ("starttls", "ssl"):
+        raise ValueError("email.security must be 'starttls' or 'ssl'")
     if settings.dip.mode not in ("paper", "live"):
         raise ValueError("dip.mode must be 'paper' or 'live'")
     if settings.kalshi.environment not in ("demo", "prod"):

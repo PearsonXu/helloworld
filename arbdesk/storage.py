@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS alerts (
     level TEXT NOT NULL,            -- info / warning / critical
     title TEXT NOT NULL,
     detail TEXT,
-    acked INTEGER NOT NULL DEFAULT 0
+    acked INTEGER NOT NULL DEFAULT 0,
+    emailed INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS dip_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,6 +110,40 @@ CREATE TABLE IF NOT EXISTS sim_sessions (
     status TEXT NOT NULL,           -- running / finished
     finished_ts TEXT,
     report TEXT                     -- JSON snapshot at the end
+);
+CREATE TABLE IF NOT EXISTS strat_state (
+    name TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    start_ts TEXT NOT NULL,
+    capital REAL NOT NULL,
+    cash REAL NOT NULL,
+    qty REAL NOT NULL DEFAULT 0,
+    start_price REAL NOT NULL,
+    last_candle_ts INTEGER NOT NULL DEFAULT 0,
+    last_action_ms INTEGER,
+    trades INTEGER NOT NULL DEFAULT 0,
+    peak REAL NOT NULL,
+    max_dd REAL NOT NULL DEFAULT 0,
+    backtest TEXT,
+    PRIMARY KEY (name, symbol)
+);
+CREATE TABLE IF NOT EXISTS strat_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    name TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    qty REAL NOT NULL,
+    price REAL NOT NULL,
+    usd REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS email_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    alerts INTEGER NOT NULL,
+    ok INTEGER NOT NULL,
+    error TEXT
 );
 CREATE TABLE IF NOT EXISTS flags (
     name TEXT PRIMARY KEY,
@@ -150,6 +185,9 @@ class Store:
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(pm_forecasts)")}
             if "venue" not in cols:  # databases created before Kalshi / Polymarket US
                 self.conn.execute("ALTER TABLE pm_forecasts ADD COLUMN venue TEXT NOT NULL DEFAULT 'polymarket'")
+            cols = {r[1] for r in self.conn.execute("PRAGMA table_info(alerts)")}
+            if "emailed" not in cols:  # 0 = not yet considered, 1 = emailed, 2 = not an email category
+                self.conn.execute("ALTER TABLE alerts ADD COLUMN emailed INTEGER NOT NULL DEFAULT 0")
             cols = {r[1] for r in self.conn.execute("PRAGMA table_info(proposals)")}
             if "dedupe_key" not in cols:
                 self.conn.execute("ALTER TABLE proposals ADD COLUMN dedupe_key TEXT")
@@ -399,6 +437,64 @@ class Store:
     def proposal_executed_since(self, dedupe_key: str, since_ts: str) -> bool:
         return bool(self._rows("SELECT 1 FROM proposals WHERE dedupe_key = ? AND status IN ('executed', 'partial') "
                                "AND ts >= ? LIMIT 1", (dedupe_key, since_ts)))
+
+    # strategy lab -----------------------------------------------------------
+    def add_strat(self, name: str, symbol: str, capital: float, price: float, candle_ts: int, backtest: str) -> None:
+        with self.lock, self.conn:
+            self.conn.execute(
+                "INSERT INTO strat_state (name, symbol, start_ts, capital, cash, start_price, last_candle_ts, "
+                "peak, backtest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, symbol, now_iso(), capital, capital, price, candle_ts, capital, backtest))
+
+    def strat_state(self, name: str, symbol: str) -> dict | None:
+        rows = self._rows("SELECT * FROM strat_state WHERE name = ? AND symbol = ?", (name, symbol))
+        return rows[0] if rows else None
+
+    def strat_states(self) -> list[dict]:
+        return self._rows("SELECT * FROM strat_state ORDER BY name, symbol")
+
+    STRAT_FIELDS = {"cash", "qty", "last_candle_ts", "last_action_ms", "trades", "peak", "max_dd"}
+
+    def update_strat(self, name: str, symbol: str, **fields) -> None:
+        cols = [k for k in fields if k in self.STRAT_FIELDS]  # whitelist: column names go into SQL
+        if not cols:
+            return
+        with self.lock, self.conn:
+            self.conn.execute(f"UPDATE strat_state SET {', '.join(f'{c} = ?' for c in cols)} "
+                              "WHERE name = ? AND symbol = ?", (*[fields[c] for c in cols], name, symbol))
+
+    def add_strat_trade(self, name: str, symbol: str, side: str, qty: float, price: float, usd: float) -> None:
+        self._insert("INSERT INTO strat_trades (ts, name, symbol, side, qty, price, usd) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     (now_iso(), name, symbol, side, qty, price, usd))
+
+    def strat_trades(self, limit: int = 50) -> list[dict]:
+        return self._rows("SELECT * FROM strat_trades ORDER BY id DESC LIMIT ?", (limit,))
+
+    def reset_strats(self) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("DELETE FROM strat_state")
+            self.conn.execute("DELETE FROM strat_trades")
+            self.conn.execute("DELETE FROM samples WHERE key LIKE 'strat_eq:%'")
+
+    # email ------------------------------------------------------------------
+    def alerts_to_email(self, since_ts: str) -> list[dict]:
+        return self._rows("SELECT * FROM alerts WHERE emailed = 0 AND ts >= ? ORDER BY id", (since_ts,))
+
+    def mark_alerts_emailed(self, ids: list[int], value: int) -> None:
+        with self.lock, self.conn:
+            self.conn.executemany("UPDATE alerts SET emailed = ? WHERE id = ?", [(value, i) for i in ids])
+
+    def log_email(self, subject: str, alerts: int, ok: bool, error: str | None = None) -> None:
+        self._insert("INSERT INTO email_log (ts, subject, alerts, ok, error) VALUES (?, ?, ?, ?, ?)",
+                     (now_iso(), subject, alerts, int(ok), error))
+
+    def emails_sent_since(self, since: datetime) -> int:
+        """Attempts count too, so a broken SMTP setup can't retry in a tight loop."""
+        return self._rows("SELECT COUNT(*) AS n FROM email_log WHERE ts >= ? AND alerts > 0",
+                          (since.isoformat(timespec="seconds"),))[0]["n"]
+
+    def email_log(self, limit: int = 10) -> list[dict]:
+        return self._rows("SELECT * FROM email_log ORDER BY id DESC LIMIT ?", (limit,))
 
     # maintenance --------------------------------------------------------
     def prune_scans(self, keep_days: float = 2.0) -> int:
