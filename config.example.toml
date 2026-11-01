@@ -239,14 +239,14 @@ min_bars_between = 2
 max_drawdown_pct = 15          # strategy drawdown of 15% -> stop until reset
 use_lppls = false              # plain baseline; the LPPLS version is custom1 below
 
-# 定制策略1 = the fast trend above on BTC only, plus the LPPLS bubble filter.
+# 定制策略1 = the fast trend above on BTC and ETH, plus the LPPLS bubble filter.
 # Runs automatically (set enabled = false to switch it off). Any trend_fast key can be overridden here.
 # LPPLS: daily fits over several windows; confidence = share of windows that look like a bubble.
 # Uses only days that have closed. The panel shows its backtest with and without the filter.
 [strategies.params.custom1]
 base = "trend_fast"
 label = "定制策略1"
-symbols = ["BTC/USD"]
+symbols = ["BTC/USD", "ETH/USD"]
 enabled = true
 use_lppls = true
 lppls_windows = [30, 45, 60, 75, 90, 105, 120]

@@ -184,7 +184,7 @@ async function renderStrategies() {
     const cls = v.bubble >= 0.5 ? "bad" : v.bubble >= 0.25 ? "warn" : "good";
     return `${esc(sym)} <span class="${cls}">${num(v.bubble * 100, 0)}%</span>`
       + ` <span class="muted">(30 天最高 ${num(v.max_30d * 100, 0)}% · 反泡沫 ${num(v.anti * 100, 0)}%${v.tc_days != null ? ` · 临界点约 ${num(v.tc_days, 0)} 天` : ""})</span>`;
-  }).join(" · ") + `<br><span class="muted">≥25% 收紧移动止损，≥50% 不开新仓，≥75% 离场。只作用于"定制策略1"（快速趋势 + LPPLS，BTC）。</span>` : "";
+  }).join(" · ") + `<br><span class="muted">≥25% 收紧移动止损，≥50% 不开新仓，≥75% 离场。只作用于"定制策略1"（快速趋势 + LPPLS，BTC 和 ETH）。</span>` : "";
   $("stratnote").textContent = `手续费 ${d.fee_pct}% + 滑点 ${d.slippage_pct}%/笔；信号只用已收盘的 K 线。回测用同一套规则跑最近的历史行情，只代表过去；"同期持有"是同一时段一直持有不动的收益，用来对比策略有没有价值。`;
 }
 

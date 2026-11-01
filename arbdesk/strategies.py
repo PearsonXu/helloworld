@@ -12,7 +12,7 @@ Strategies (signals use CLOSED candles only, so there's no look-ahead):
   rsi        buy when RSI < low threshold, sell when RSI > high threshold (mean reversion)
   trend_fast fast trend on 6h bars with crash protection (trendfast.py)
   custom*    user-named variants: params carry "base" (the engine, e.g. trend_fast), "label",
-             optional "symbols"; e.g. custom1 = 定制策略1 = trend_fast + LPPLS on BTC
+             optional "symbols"; e.g. custom1 = 定制策略1 = trend_fast + LPPLS on BTC and ETH
 
 The same exposure function drives both the live paper trading and a backtest
 over recent history, so the backtest is an honest preview of the live logic.

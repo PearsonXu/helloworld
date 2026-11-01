@@ -228,9 +228,9 @@ class StrategyConfig:
         # Fast trend with crash protection (see trendfast.py). Bars are 6 hours. Plain version,
         # kept as the baseline that custom1 is compared against.
         "trend_fast": {**TREND_FAST, "use_lppls": False},
-        # 定制策略1: the fast trend on BTC with the LPPLS bubble filter. "base" names the engine,
+        # 定制策略1: the fast trend on BTC and ETH with the LPPLS bubble filter. "base" names the engine,
         # "symbols" overrides the lab's symbol list; it runs unless "enabled" is false.
-        "custom1": {**TREND_FAST, "base": "trend_fast", "label": "定制策略1", "symbols": ["BTC/USD"],
+        "custom1": {**TREND_FAST, "base": "trend_fast", "label": "定制策略1", "symbols": ["BTC/USD", "ETH/USD"],
                     "enabled": True, "use_lppls": True},
     })
 
