@@ -10,6 +10,9 @@ Strategies (signals use CLOSED candles only, so there's no look-ahead):
   sma_cross  hold while the fast moving average is above the slow one (trend following)
   donchian   enter on a close above the N-day high, exit below the M-day low (breakout)
   rsi        buy when RSI < low threshold, sell when RSI > high threshold (mean reversion)
+  trend_fast fast trend on 6h bars with crash protection (trendfast.py)
+  custom*    user-named variants: params carry "base" (the engine, e.g. trend_fast), "label",
+             optional "symbols"; e.g. custom1 = 定制策略1 = trend_fast + LPPLS on BTC
 
 The same exposure function drives both the live paper trading and a backtest
 over recent history, so the backtest is an honest preview of the live logic.
@@ -26,6 +29,15 @@ log = logging.getLogger(__name__)
 TF_SECONDS = {"1h": 3600, "2h": 7200, "6h": 21600, "1d": 86400}
 LABELS = {"dca": "定投", "sma_cross": "均线交叉（趋势）", "donchian": "突破（唐奇安通道）", "rsi": "RSI 均值回归",
           "trend_fast": "快速趋势+风控"}
+
+
+def engine(name: str, p: dict) -> str:
+    """The rule set a strategy runs: its own name, or the "base" of a custom variant."""
+    return p.get("base", name)
+
+
+def label(name: str, p: dict | None) -> str:
+    return (p or {}).get("label") or LABELS.get(name, name)
 
 
 # --------------------------------------------------------------------------
@@ -87,7 +99,7 @@ def backtest(name: str, candles: list[list], p: dict, capital: float, fee_pct: f
     """All-in/all-out at the close of the signal candle (DCA: periodic buys), with costs."""
     if len(candles) < 2:
         return {}
-    if name == "trend_fast":
+    if engine(name, p) == "trend_fast":
         from .trendfast import simulate
         return simulate(candles, p, capital, fee_pct, slip_pct)["stats"]
     cost = (fee_pct + slip_pct) / 100
@@ -143,6 +155,12 @@ class StrategyLab:
     def params(self, name: str) -> dict:
         return self.cfg.params[name]
 
+    def enabled(self) -> list[str]:
+        """Listed strategies plus custom variants (params with a "base") that aren't switched off."""
+        extra = [n for n, p in self.cfg.params.items()
+                 if p.get("base") and p.get("enabled", True) and n not in self.cfg.enabled]
+        return [n for n in self.cfg.enabled if n in self.cfg.params] + extra
+
     def _candles(self, symbol: str, tf: str, cache: dict, limit: int = 300) -> list[list]:
         key = (symbol, tf, limit)
         if key not in cache:  # one fetch per symbol/timeframe per tick
@@ -153,9 +171,9 @@ class StrategyLab:
         now_ms = now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
         cache, prices, out = {}, {}, {"trades": [], "errors": {}}
         cost = (self.cfg.fee_pct + self.cfg.slippage_pct) / 100
-        for name in self.cfg.enabled:
+        for name in self.enabled():
             p = self.params(name)
-            for sym in self.cfg.symbols:
+            for sym in p.get("symbols") or self.cfg.symbols:
                 try:
                     candles = closed_candles(self._candles(sym, p["timeframe"], cache, p.get("history_bars", 300)),
                                              p["timeframe"], now_ms)
@@ -169,9 +187,9 @@ class StrategyLab:
                     if st is None:
                         st = self._start(name, sym, candles, price, now_ms)
                     risk = None
-                    if name == "trend_fast" and p.get("use_lppls"):
+                    if engine(name, p) == "trend_fast" and p.get("use_lppls"):
                         try:
-                            risk = self._lppls_risk(sym, p, candles[0][0], cache, now_ms)
+                            risk = self._lppls_risk(name, sym, p, candles[0][0], cache, now_ms)
                         except Exception as e:  # the filter fails open: the strategy's own stops still apply
                             out["errors"][f"lppls:{sym}"] = f"{type(e).__name__}: {str(e)[:150]}"
                     trade = self._step(name, sym, st, candles, price, cost, now_ms, risk)
@@ -204,8 +222,8 @@ class StrategyLab:
                 usd = min(p["amount_usd"], st["cash"])
                 return self._fill(name, sym, "buy", usd * (1 - cost) / price, price, usd, now_ms, last)
             return None
-        if name == "trend_fast":
-            return self._step_trend(sym, st, candles, price, cost, now_ms, risk)
+        if engine(name, p) == "trend_fast":
+            return self._step_trend(name, sym, st, candles, price, cost, now_ms, risk)
         if last <= st["last_candle_ts"]:
             return None  # act once per newly closed candle
         want = exposure_series(name, candles, p)[-1]
@@ -218,7 +236,7 @@ class StrategyLab:
         return None
 
     # LPPLS bubble filter ------------------------------------------------------
-    def _lppls_risk(self, sym: str, p: dict, first_bar_ms: int, cache: dict, now_ms: int) -> dict[int, float]:
+    def _lppls_risk(self, name: str, sym: str, p: dict, first_bar_ms: int, cache: dict, now_ms: int) -> dict[int, float]:
         """{day_ms: bubble confidence} covering the trend backtest, from daily candles.
         Cached in the flags table; after the first run only newly closed days are fitted."""
         from . import lppls
@@ -238,10 +256,10 @@ class StrategyLab:
         if series.keys() != cached.keys():
             self.store.set_flag(key, json.dumps({"cfg": [windows, p["lppls_min_r2"]],
                                                  "days": {str(d): v for d, v in sorted(series.items())}}))
-            self._lppls_alert(sym, series, p)
+            self._lppls_alert(name, sym, series, p)
         return {d: v[0] for d, v in series.items()}
 
-    def _lppls_alert(self, sym: str, series: dict, p: dict) -> None:
+    def _lppls_alert(self, name: str, sym: str, series: dict, p: dict) -> None:
         if not series:
             return
         day = max(series)
@@ -261,12 +279,13 @@ class StrategyLab:
         when = f"，模型估计的临界点约在 {tc:.0f} 天后（误差很大，仅供参考）" if tc is not None else ""
         self.store.add_alert(
             key, level, f"{sym} LPPLS 泡沫置信度 {bubble:.0%}",
-            f"日线价格呈“加速上涨 + 振荡收敛”的泡沫形态{when}。快速趋势策略"
+            f"日线价格呈“加速上涨 + 振荡收敛”的泡沫形态{when}。{label(name, p)}："
             + action + "LPPLS 误报很多，它只用来减少风险，不用来做空。")
 
     def lppls_status(self) -> dict:
         out = {}
-        for sym in self.cfg.symbols:
+        syms = dict.fromkeys(s for n in self.enabled() for s in (self.params(n).get("symbols") or self.cfg.symbols))
+        for sym in syms:
             flag = self.store.get_flag(f"lppls:{sym}")
             if not flag:
                 continue
@@ -279,11 +298,11 @@ class StrategyLab:
                         "max_30d": max(v[0] for k, v in days.items() if int(k) >= int(d) - 30 * 86_400_000)}
         return out
 
-    def _step_trend(self, sym, st, candles, price, cost, now_ms, risk=None) -> dict | None:
+    def _step_trend(self, name, sym, st, candles, price, cost, now_ms, risk=None) -> dict | None:
         """Fast trend: stops are checked against the live price on every scan; entries, exits
         and stop updates follow the deterministic replay at each newly closed candle."""
         from .trendfast import simulate
-        name, p = "trend_fast", self.params("trend_fast")
+        p = self.params(name)
         if st["qty"] > 0 and st["stop"] and price <= st["stop"]:
             t = self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms,
                            st["last_candle_ts"])
@@ -336,14 +355,14 @@ class StrategyLab:
                 self.store.latest_sample(f"strat_eq:{st['name']}:{st['symbol']}")
             hold = (last_px / st["start_price"] - 1) * 100 if last_px else None
             rows.append({**{k: st[k] for k in ("name", "symbol", "capital", "cash", "qty", "trades", "start_ts")},
-                         "label": LABELS.get(st["name"], st["name"]), "equity": eq,
+                         "label": label(st["name"], self.cfg.params.get(st["name"])), "equity": eq,
                          "return_pct": (eq / st["capital"] - 1) * 100 if eq else None,
                          "buy_hold_pct": hold, "max_dd_pct": st["max_dd"] * 100,
                          "position": ("持有" + (f"（止损 {st['stop']:,.2f}）" if st.get("stop") else "")
                                       if st["qty"] > 0 else "空仓"),
                          "note": st.get("note") or "",
                          "backtest": json.loads(st["backtest"] or "{}")})
-        return {"enabled": self.cfg.enabled, "rows": rows, "recent": self.store.strat_trades(30),
+        return {"enabled": self.enabled(), "rows": rows, "recent": self.store.strat_trades(30),
                 "lppls": self.lppls_status(),
                 "fee_pct": self.cfg.fee_pct, "slippage_pct": self.cfg.slippage_pct}
 

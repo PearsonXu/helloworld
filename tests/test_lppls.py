@@ -101,8 +101,8 @@ def test_lab_caches_series_and_alerts(tmp_path, monkeypatch):
 
     (tmp_path / "config.toml").write_text(f'data_dir = "{(tmp_path / "data").as_posix()}"\n')
     s = load_settings(tmp_path / "config.toml", tmp_path / ".env")
-    s.strategies.enabled = ["trend_fast"]
-    s.strategies.symbols = ["BTC/USD"]
+    s.strategies.enabled = ["trend_fast"]                     # plain baseline, no LPPLS
+    s.strategies.symbols = ["BTC/USD", "ETH/USD"]            # custom1 still runs on BTC only
     store = Store(s.data_dir / "t.db")
     t, y = bubble(n=200, tc=210.0)
     daily = candles([float(v) for v in np.exp(y)], tf_ms=DAY)
@@ -122,7 +122,12 @@ def test_lab_caches_series_and_alerts(tmp_path, monkeypatch):
     assert len(fits) == n_first                                                # cached: nothing refitted
     st = lab.status()
     assert st["lppls"]["BTC/USD"]["bubble"] >= 0.25
-    bt = st["rows"][0]["backtest"]
-    assert "without_lppls" in bt and bt["lppls_used"]
+    rows = {(r["name"], r["symbol"]): r for r in st["rows"]}
+    assert set(rows) == {("custom1", "BTC/USD"), ("trend_fast", "BTC/USD"), ("trend_fast", "ETH/USD")}
+    custom = rows[("custom1", "BTC/USD")]
+    assert custom["label"] == "定制策略1"
+    assert "without_lppls" in custom["backtest"] and custom["backtest"]["lppls_used"]
+    assert not rows[("trend_fast", "BTC/USD")]["backtest"].get("lppls_used")
+    assert "custom1" in st["enabled"]
     alerts = store.alerts()
     assert alerts and alerts[0]["key"] == "lppls:BTC/USD"

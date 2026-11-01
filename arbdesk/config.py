@@ -198,6 +198,19 @@ class SimConfig:
     auto_execute: bool = True      # execute passing paper proposals automatically while a session runs
 
 
+TREND_FAST = {
+    "timeframe": "6h", "history_bars": 900, "ema_fast": 8, "ema_slow": 24, "regime_sma": 200,
+    "min_spread_pct": 0.3, "atr_period": 14, "atr_stop_mult": 2.0, "trail_atr_mult": 3.0,
+    "min_stop_pct": 3.0, "hard_stop_pct": 6.0, "risk_per_trade_pct": 2.0, "max_position_pct": 50.0,
+    "crash_drop_pct": 8.0, "crash_lookback": 4, "crash_cooldown": 8, "loss_streak": 3, "streak_cooldown": 12,
+    "min_bars_between": 2, "max_drawdown_pct": 15.0,
+    # LPPLS bubble filter (lppls.py): daily fits over several windows.
+    "use_lppls": False, "lppls_windows": [30, 45, 60, 75, 90, 105, 120],
+    "lppls_tighten": 0.25, "lppls_block": 0.5, "lppls_exit": 0.75, "lppls_trail_atr_mult": 1.5,
+    "lppls_min_r2": 0.8,
+}
+
+
 @dataclass
 class StrategyConfig:
     """Strategy lab: classic BTC/ETH spot strategies, paper-traded on live candles."""
@@ -212,18 +225,13 @@ class StrategyConfig:
         "sma_cross": {"timeframe": "1d", "fast": 20, "slow": 50},
         "donchian": {"timeframe": "1d", "entry": 20, "exit": 10},
         "rsi": {"timeframe": "1h", "period": 14, "buy_below": 30, "sell_above": 70},
-        # Fast trend with crash protection (see trendfast.py). Bars are 6 hours.
-        "trend_fast": {"timeframe": "6h", "history_bars": 900, "ema_fast": 8, "ema_slow": 24,
-                       "regime_sma": 200, "min_spread_pct": 0.3, "atr_period": 14, "atr_stop_mult": 2.0,
-                       "trail_atr_mult": 3.0, "min_stop_pct": 3.0, "hard_stop_pct": 6.0,
-                       "risk_per_trade_pct": 2.0, "max_position_pct": 50.0, "crash_drop_pct": 8.0,
-                       "crash_lookback": 4, "crash_cooldown": 8, "loss_streak": 3, "streak_cooldown": 12,
-                       "min_bars_between": 2, "max_drawdown_pct": 15.0,
-                       # LPPLS bubble filter (lppls.py): daily fits over several windows.
-                       "use_lppls": True, "lppls_windows": [30, 45, 60, 75, 90, 105, 120],
-                       "lppls_tighten": 0.25, "lppls_block": 0.5, "lppls_exit": 0.75,
-                       "lppls_trail_atr_mult": 1.5,
-                       "lppls_min_r2": 0.8},
+        # Fast trend with crash protection (see trendfast.py). Bars are 6 hours. Plain version,
+        # kept as the baseline that custom1 is compared against.
+        "trend_fast": {**TREND_FAST, "use_lppls": False},
+        # 定制策略1: the fast trend on BTC with the LPPLS bubble filter. "base" names the engine,
+        # "symbols" overrides the lab's symbol list; it runs unless "enabled" is false.
+        "custom1": {**TREND_FAST, "base": "trend_fast", "label": "定制策略1", "symbols": ["BTC/USD"],
+                    "enabled": True, "use_lppls": True},
     })
 
 

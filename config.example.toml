@@ -237,8 +237,17 @@ loss_streak = 3                # 3 losses in a row -> pause 12 bars (3 days)
 streak_cooldown = 12
 min_bars_between = 2
 max_drawdown_pct = 15          # strategy drawdown of 15% -> stop until reset
-# LPPLS bubble filter: daily fits over several windows; confidence = share of windows that
-# look like a bubble. Uses only days that have closed. Panel shows results with and without it.
+use_lppls = false              # plain baseline; the LPPLS version is custom1 below
+
+# 定制策略1 = the fast trend above on BTC only, plus the LPPLS bubble filter.
+# Runs automatically (set enabled = false to switch it off). Any trend_fast key can be overridden here.
+# LPPLS: daily fits over several windows; confidence = share of windows that look like a bubble.
+# Uses only days that have closed. The panel shows its backtest with and without the filter.
+[strategies.params.custom1]
+base = "trend_fast"
+label = "定制策略1"
+symbols = ["BTC/USD"]
+enabled = true
 use_lppls = true
 lppls_windows = [30, 45, 60, 75, 90, 105, 120]
 lppls_tighten = 0.25           # >= 25%: trailing stop tightens to lppls_trail_atr_mult x ATR

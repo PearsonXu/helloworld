@@ -72,6 +72,7 @@ def lab(tmp_path):
     s = load_settings(tmp_path / "config.toml", tmp_path / ".env")
     s.strategies.enabled = ["sma_cross", "dca"]
     s.strategies.symbols = ["BTC/USD"]
+    s.strategies.params["custom1"]["enabled"] = False
     s.strategies.params["sma_cross"].update(fast=5, slow=20)
     store = Store(s.data_dir / "t.db")
     up = candles([100.0 + i for i in range(60)])
@@ -128,6 +129,7 @@ def test_trend_fast_live_sizing_and_realtime_stop(tmp_path):
     s = load_settings(tmp_path / "config.toml", tmp_path / ".env")
     s.strategies.enabled = ["trend_fast"]
     s.strategies.symbols = ["BTC/USD"]
+    s.strategies.params["custom1"]["enabled"] = False
     store = Store(s.data_dir / "t.db")
     up = candles([100.0 * 1.004 ** i for i in range(300)], tf_ms=H6)
     m = FakeMarket({"6h": up}, price=up[-1][4])
