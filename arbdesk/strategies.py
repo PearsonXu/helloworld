@@ -24,16 +24,30 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from .intraday import LABELS as INTRADAY_LABELS
+
 log = logging.getLogger(__name__)
 
-TF_SECONDS = {"1h": 3600, "2h": 7200, "6h": 21600, "1d": 86400}
+TF_SECONDS = {"5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "6h": 21600, "1d": 86400}
 LABELS = {"dca": "定投", "sma_cross": "均线交叉（趋势）", "donchian": "突破（唐奇安通道）", "rsi": "RSI 均值回归",
           "trend_fast": "快速趋势+风控"}
+LABELS.update(INTRADAY_LABELS)
 
 
 def engine(name: str, p: dict) -> str:
     """The rule set a strategy runs: its own name, or the "base" of a custom variant."""
     return p.get("base", name)
+
+
+def simulator(eng: str):
+    """Replay engine for bar-by-bar strategies (None for the simple exposure strategies)."""
+    if eng == "trend_fast":
+        from .trendfast import simulate
+        return simulate
+    if eng in INTRADAY_LABELS:
+        from . import intraday
+        return lambda *a, **k: intraday.simulate(eng, *a, **k)
+    return None
 
 
 def label(name: str, p: dict | None) -> str:
@@ -99,9 +113,9 @@ def backtest(name: str, candles: list[list], p: dict, capital: float, fee_pct: f
     """All-in/all-out at the close of the signal candle (DCA: periodic buys), with costs."""
     if len(candles) < 2:
         return {}
-    if engine(name, p) == "trend_fast":
-        from .trendfast import simulate
-        return simulate(candles, p, capital, fee_pct, slip_pct)["stats"]
+    sim = simulator(engine(name, p))
+    if sim:
+        return sim(candles, p, capital, fee_pct, slip_pct)["stats"]
     cost = (fee_pct + slip_pct) / 100
     cash, qty, trades, peak, mdd = capital, 0.0, 0, capital, 0.0
     if name == "dca":
@@ -156,16 +170,38 @@ class StrategyLab:
         return self.cfg.params[name]
 
     def enabled(self) -> list[str]:
-        """Listed strategies plus custom variants (params with a "base") that aren't switched off."""
-        extra = [n for n, p in self.cfg.params.items()
-                 if p.get("base") and p.get("enabled", True) and n not in self.cfg.enabled]
-        return [n for n in self.cfg.enabled if n in self.cfg.params] + extra
+        """Listed strategies, plus those whose params say enabled = true (custom variants and the
+        intraday strategies), minus those whose params say enabled = false."""
+        ps = self.cfg.params
+        listed = [n for n in self.cfg.enabled if n in ps and ps[n].get("enabled", True)]
+        return listed + [n for n, p in ps.items()
+                         if n not in listed and p.get("enabled", bool(p.get("base")))]
 
     def _candles(self, symbol: str, tf: str, cache: dict, limit: int = 300) -> list[list]:
         key = (symbol, tf, limit)
         if key not in cache:  # one fetch per symbol/timeframe per tick
-            cache[key] = self.market.ohlcv(symbol, tf, limit)
+            cache[key] = self._history(symbol, tf, limit)
         return cache[key]
+
+    def _history(self, symbol: str, tf: str, limit: int) -> list[list]:
+        """Long histories (e.g. 30 days of 15m candles = 10 requests) are fetched once, then
+        topped up with one request per tick; a gap or a bigger limit triggers a full refetch."""
+        if limit <= 300:
+            return self.market.ohlcv(symbol, tf, limit)
+        if not hasattr(self, "_hist"):
+            self._hist = {}
+        have = self._hist.get((symbol, tf))
+        if have and len(have) >= limit:
+            recent = self.market.ohlcv(symbol, tf, 300)
+            if recent and recent[0][0] <= have[-1][0]:
+                merged = {c[0]: c for c in have}
+                merged.update({c[0]: c for c in recent})
+                have = [merged[k] for k in sorted(merged)][-limit:]
+                self._hist[(symbol, tf)] = have
+                return have
+        have = self.market.ohlcv(symbol, tf, limit)
+        self._hist[(symbol, tf)] = have
+        return have
 
     def tick(self, now_ms: int | None = None) -> dict:
         now_ms = now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -187,7 +223,7 @@ class StrategyLab:
                     if st is None:
                         st = self._start(name, sym, candles, price, now_ms)
                     risk = None
-                    if engine(name, p) == "trend_fast" and p.get("use_lppls"):
+                    if simulator(engine(name, p)) and p.get("use_lppls"):
                         try:
                             risk = self._lppls_risk(name, sym, p, candles[0][0], cache, now_ms)
                         except Exception as e:  # the filter fails open: the strategy's own stops still apply
@@ -222,8 +258,8 @@ class StrategyLab:
                 usd = min(p["amount_usd"], st["cash"])
                 return self._fill(name, sym, "buy", usd * (1 - cost) / price, price, usd, now_ms, last)
             return None
-        if engine(name, p) == "trend_fast":
-            return self._step_trend(name, sym, st, candles, price, cost, now_ms, risk)
+        if simulator(engine(name, p)):
+            return self._step_sim(name, sym, st, candles, price, cost, now_ms, risk)
         if last <= st["last_candle_ts"]:
             return None  # act once per newly closed candle
         want = exposure_series(name, candles, p)[-1]
@@ -298,11 +334,12 @@ class StrategyLab:
                         "max_30d": max(v[0] for k, v in days.items() if int(k) >= int(d) - 30 * 86_400_000)}
         return out
 
-    def _step_trend(self, name, sym, st, candles, price, cost, now_ms, risk=None) -> dict | None:
-        """Fast trend: stops are checked against the live price on every scan; entries, exits
-        and stop updates follow the deterministic replay at each newly closed candle."""
-        from .trendfast import simulate
+    def _step_sim(self, name, sym, st, candles, price, cost, now_ms, risk=None) -> dict | None:
+        """Replay strategies (fast trend, intraday): stops are checked against the live price on
+        every scan; entries, exits and stop updates follow the deterministic replay at each newly
+        closed candle."""
         p = self.params(name)
+        simulate = simulator(engine(name, p))
         if st["qty"] > 0 and st["stop"] and price <= st["stop"]:
             t = self._fill(name, sym, "sell", st["qty"], price, st["qty"] * price * (1 - cost), now_ms,
                            st["last_candle_ts"])
@@ -318,9 +355,14 @@ class StrategyLab:
             plain = simulate(*args)["stats"]
             bt["without_lppls"] = {k: plain[k] for k in ("return_pct", "max_drawdown_pct", "trades", "win_rate_pct")}
             bt["bubble_now"] = sim["bubble"]
+        if self.cfg.fee_pct_low < self.cfg.fee_pct:
+            low = simulate(candles, p, self.cfg.capital_per_strategy, self.cfg.fee_pct_low, self.cfg.slippage_pct,
+                           risk=risk)["stats"]
+            bt["low_fee"] = {"fee_pct": self.cfg.fee_pct_low,
+                             **{k: low[k] for k in ("return_pct", "max_drawdown_pct", "win_rate_pct")}}
         note = sim["note"] or ""
         if sim["cooldown_left_bars"] and not sim["in_position"]:
-            note = (note + " · " if note else "") + f"冷却中，约 {sim['cooldown_left_bars'] * 6} 小时后可再入场"
+            note = (note + " · " if note else "") + f"冷却中，约 {sim['cooldown_left_bars'] * TF_SECONDS[p['timeframe']] / 3600:.0f} 小时后可再入场"
         self.store.update_strat(name, sym, last_candle_ts=last, note=note, backtest=json.dumps(bt),
                                 stop=sim["stop"] if sim["in_position"] else None)
         if sim["in_position"] and st["qty"] == 0 and st["cash"] > 0:

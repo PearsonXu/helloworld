@@ -102,6 +102,8 @@ def test_lab_caches_series_and_alerts(tmp_path, monkeypatch):
     (tmp_path / "config.toml").write_text(f'data_dir = "{(tmp_path / "data").as_posix()}"\n')
     s = load_settings(tmp_path / "config.toml", tmp_path / ".env")
     s.strategies.enabled = ["trend_fast"]                     # plain baseline, no LPPLS
+    for k in ("vwap_revert", "orb", "momentum_vol"):
+        s.strategies.params[k]["enabled"] = False
     s.strategies.symbols = ["BTC/USD", "ETH/USD", "SOL/USD"]  # custom1 keeps its own list: BTC and ETH
     store = Store(s.data_dir / "t.db")
     t, y = bubble(n=200, tc=210.0)

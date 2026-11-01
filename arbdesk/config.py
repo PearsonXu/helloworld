@@ -198,6 +198,8 @@ class SimConfig:
     auto_execute: bool = True      # execute passing paper proposals automatically while a session runs
 
 
+from .intraday import DEFAULTS as INTRADAY_DEFAULTS  # noqa: E402
+
 TREND_FAST = {
     "timeframe": "6h", "history_bars": 900, "ema_fast": 8, "ema_slow": 24, "regime_sma": 200,
     "min_spread_pct": 0.3, "atr_period": 14, "atr_stop_mult": 2.0, "trail_atr_mult": 3.0,
@@ -219,6 +221,7 @@ class StrategyConfig:
     symbols: list[str] = field(default_factory=lambda: ["BTC/USD", "ETH/USD"])
     capital_per_strategy: float = 25.0  # virtual $ per strategy and symbol (separate from the sim account)
     fee_pct: float = 0.6                # per fill; Coinbase's entry-tier fees can be higher, check yours
+    fee_pct_low: float = 0.1            # second backtest at a low (maker / high-tier) fee, for comparison
     slippage_pct: float = 0.05
     params: dict = field(default_factory=lambda: {
         "dca": {"timeframe": "1d", "every_days": 7, "amount_usd": 5.0},
@@ -232,6 +235,9 @@ class StrategyConfig:
         # "symbols" overrides the lab's symbol list; it runs unless "enabled" is false.
         "custom1": {**TREND_FAST, "base": "trend_fast", "label": "定制策略1", "symbols": ["BTC/USD", "ETH/USD"],
                     "enabled": True, "use_lppls": True},
+        # Intraday strategies on 15-minute candles (intraday.py); "enabled": True runs them even when
+        # an older config.toml lists `enabled` without them.
+        **{k: {**v, "enabled": True} for k, v in INTRADAY_DEFAULTS.items()},
     })
 
 

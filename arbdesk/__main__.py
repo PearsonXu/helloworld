@@ -252,6 +252,7 @@ def main() -> None:
                   + (f" | {bt['trades_per_week']}/week, win {bt.get('win_rate_pct')}%, hold {bt.get('avg_hold_days')}d, "
                      f"fees {bt.get('fees_pct_of_capital')}% of capital, exits {bt.get('exits')}"
                      if "trades_per_week" in bt else "")
+                  + (f" | at {bt['low_fee']['fee_pct']}% fee {bt['low_fee']['return_pct']:+.2f}%" if "low_fee" in bt else "")
                   + (f" | without LPPLS {bt['without_lppls']['return_pct']:+.2f}%, "
                      f"maxDD {bt['without_lppls']['max_drawdown_pct']:.1f}%" if "without_lppls" in bt else "")
                   + (f" | {r['note']}" if r.get("note") else ""))

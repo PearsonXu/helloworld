@@ -194,6 +194,7 @@ symbols = ["BTC/USD", "ETH/USD"]
 capital_per_strategy = 25
 fee_pct = 0.6                  # per fill; check your exchange fee tier
 slippage_pct = 0.05
+fee_pct_low = 0.1              # backtests are also run at this fee, to show what a cheaper fee tier changes
 
 [strategies.params.dca]
 timeframe = "1d"
@@ -255,6 +256,42 @@ lppls_block = 0.5              # >= 50%: no new entries
 lppls_exit = 0.75              # >= 75%: exit
 lppls_trail_atr_mult = 1.5
 lppls_min_r2 = 0.8
+
+# Intraday strategies (15-minute candles, long-only, always flat at the session end).
+# They run automatically on [strategies].symbols; set enabled = false to switch one off.
+# Sessions start at session_start_utc (0 = midnight UTC; 13.5 = US stock open in summer).
+[strategies.params.vwap_revert]          # VWAP 回归
+enabled = true
+band_sd = 2.0                  # buy when price is 2 standard deviations below the session VWAP...
+min_band_pct = 0.6             # ...and at least 0.6% below it
+stop_sd = 1.5
+regime_bars = 288              # 3-day average: skip if price is more than 1% below it (downtrend)
+regime_tolerance_pct = 1.0
+last_entry_hour = 20           # no new entries after 20:00 into the session
+
+[strategies.params.orb]                  # 开盘区间突破
+enabled = true
+range_minutes = 60             # the first hour sets the range
+target_r = 2.0                 # take profit at 2x the risk (entry - range low)
+last_entry_hour = 12
+min_range_pct = 0.3            # skip ranges too narrow (noise) or too wide (stop too far)
+max_range_pct = 3.0
+
+[strategies.params.momentum_vol]         # 动量+放量突破
+enabled = true
+lookback_bars = 4              # >= 1.5% up over the last hour...
+move_pct = 1.5
+volume_mult = 2.0              # ...on a bar with >= 2x the average volume of the last day...
+volume_bars = 96
+close_in_range = 0.7           # ...that closes in the top 30% of its range
+regime_bars = 192              # and price above its 2-day average
+atr_stop_mult = 2.0
+trail_atr_mult = 2.0
+max_hold_bars = 24             # exit after 6 hours at the latest
+
+# Shared by all three (each can override): risk_per_trade_pct = 1, min_stop_pct = 0.8,
+# hard_stop_pct = 3, max_position_pct = 50, daily_loss_pct = 3, max_drawdown_pct = 15,
+# history_bars = 2880 (30 days), use_lppls = false (true: no entries while the bubble confidence >= lppls_block)
 
 # ---------------------------------------------------------------------------
 # Email alerts for black-swan events. Password goes in the vault, never here:

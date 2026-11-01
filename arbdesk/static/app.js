@@ -177,6 +177,7 @@ async function renderStrategies() {
       <td>${num(r.max_dd_pct, 1)}%</td><td>${r.trades}</td>
       <td>${bt.return_pct == null ? "—" : `${pct(bt.return_pct)} vs 持有 ${pct(bt.buy_hold_pct)} · 回撤 ${num(bt.max_drawdown_pct, 1)}% · ${bt.trades} 笔 · ${days} 天`}
         ${bt.trades_per_week != null ? `<br><span class="muted">每周 ${num(bt.trades_per_week, 1)} 笔 · 胜率 ${bt.win_rate_pct == null ? "—" : num(bt.win_rate_pct, 0) + "%"} · 平均持有 ${bt.avg_hold_days ?? "—"} 天 · 手续费占本金 ${num(bt.fees_pct_of_capital, 1)}%</span>` : ""}
+        ${bt.low_fee ? `<br><span class="muted">若费率 ${bt.low_fee.fee_pct}%/笔：${pct(bt.low_fee.return_pct)} · 回撤 ${num(bt.low_fee.max_drawdown_pct, 1)}%</span>` : ""}
         ${bt.without_lppls ? `<br><span class="muted">不加 LPPLS：${pct(bt.without_lppls.return_pct)} · 回撤 ${num(bt.without_lppls.max_drawdown_pct, 1)}% · ${bt.without_lppls.trades} 笔</span>` : ""}</td></tr>`;
   }).join("") || `<tr><td colspan="9" class="muted">下一次扫描时自动开始（每个策略每个币种 $25 虚拟资金）</td></tr>`;
   const lp = Object.entries(d.lppls || {});
