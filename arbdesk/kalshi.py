@@ -88,6 +88,10 @@ def parse_market(m: dict) -> dict:
         "volume_24h": _f(m.get("volume_24h_fp")) or 0.0,
         "active": active, "accepting_orders": active,
         "fees_enabled": True, "min_size": 1.0,
+        # Threshold contracts (e.g. "BTC above $X at 5pm"): used by the tail-pricing monitor.
+        "strike_type": m.get("strike_type"), "floor_strike": _f(m.get("floor_strike")),
+        "cap_strike": _f(m.get("cap_strike")),
+        "expiry": m.get("expected_expiration_time") or m.get("close_time"),
     }
 
 
@@ -217,10 +221,12 @@ class KalshiClient:
         return r.json()
 
     # public
-    def events(self, limit: int) -> list[dict]:
+    def events(self, limit: int, series_ticker: str | None = None) -> list[dict]:
         out, cursor = [], None
         while len(out) < limit:
             params = {"status": "open", "with_nested_markets": "true", "limit": min(200, limit - len(out))}
+            if series_ticker:
+                params["series_ticker"] = series_ticker
             if cursor:
                 params["cursor"] = cursor
             page = self.request("GET", "/events", params)

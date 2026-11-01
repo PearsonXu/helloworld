@@ -129,6 +129,22 @@ class Secrets:
                 f"polymarket_us={'set' if self.pmus_secret_key else 'unset'})")
 
 
+@dataclass
+class TailConfig:
+    """Black-swan tickets: crypto threshold contracts priced against Deribit options."""
+    enabled: bool = True
+    currencies: list[str] = field(default_factory=lambda: ["BTC", "ETH"])
+    venues: list[str] = field(default_factory=lambda: ["kalshi", "polymarket_us"])
+    kalshi_series: list[str] = field(default_factory=lambda: ["KXBTCD", "KXBTC", "KXETHD", "KXETH"])
+    max_price: float = 0.15            # only "lottery tickets": sides costing <= 15 cents
+    min_edge: float = 0.02             # option-implied prob - price - fee
+    min_ratio: float = 1.5             # option-implied prob / price
+    max_expiry_gap_days: float = 45    # contract date must sit near listed option expiries
+    max_usd_per_bet: float = 5.0
+    quarterly_budget_usd: float = 30.0  # all tail bets per calendar quarter (paper and live)
+    max_pmus_quotes: int = 40          # Polymarket US crypto markets quoted per scan
+
+
 # Venue-specific defaults on top of VenueConfig's.
 KALSHI_DEFAULTS = {"environment": "demo", "min_liquidity_usd": 500}
 PMUS_DEFAULTS = {"min_liquidity_usd": 1000}
@@ -144,6 +160,7 @@ class Settings:
     secrets: Secrets
     data_dir: Path
     crossvenue: CrossVenueConfig = field(default_factory=CrossVenueConfig)
+    tail: TailConfig = field(default_factory=TailConfig)
     kalshi: VenueConfig = field(default_factory=lambda: VenueConfig(**KALSHI_DEFAULTS))
     polymarket_us: VenueConfig = field(default_factory=lambda: VenueConfig(**PMUS_DEFAULTS))
 
@@ -232,6 +249,7 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         secrets=_load_secrets(env_path, vault_data),
         data_dir=data_dir,
         crossvenue=CrossVenueConfig(**raw.get("crossvenue", {})),
+        tail=TailConfig(**raw.get("tail", {})),
         kalshi=VenueConfig(**{**KALSHI_DEFAULTS, **raw.get("kalshi", {})}),
         polymarket_us=VenueConfig(**{**PMUS_DEFAULTS, **raw.get("polymarket_us", {})}),
     )

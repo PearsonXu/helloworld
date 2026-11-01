@@ -146,6 +146,40 @@ python -m arbdesk venue polymarket_us --no-llm
 
 ---
 
+## 二点七、黑天鹅定价：预测市场合约 vs 期权反推概率（不是套利）
+
+**做什么：** 对 Kalshi 和 Polymarket US 上每一个"BTC/ETH 到期价格高于 / 低于 / 位于某区间"的合约，用 Deribit 期权链反推同一价位、同一日期的概率，再和合约售价比较。
+- 期权反推概率：用 N(d2) 加上波动率曲线倾斜（skew）修正；两个到期日之间按总方差插值；不在报价范围外做外推。
+- 某一边只卖几美分，而期权反推的概率明显更高时，就是"便宜的黑天鹅彩票"。
+- 默认的"便宜"标准：价格 ≤15¢、反推概率 ≥ 价格的 1.5 倍、扣费后优势 ≥2¢。
+- 满足条件的合约会生成待审批建议（`kind = "tail"`）。
+
+**数据来源：**
+- **Kalshi：** 用 `strike_type`、`floor_strike`、`cap_strike` 字段，按 `kalshi_series` 里列出的系列拉取。
+- **Polymarket US：** 只解析措辞简单、不含歧义的标题，例如 "above $150,000"、"reach $10k"、"dip to $55k"。
+  - 标题里出现两个数字、同时提到两种币、或者是百分比的，一律跳过，不猜。
+  - "reach / hit" 这类"到期前任何时刻触及"的合约，用 2 倍到期概率近似（这是无漂移情况下的近似）。
+- **Deribit：** 只读取公开行情，不需要账户。
+
+**为什么"比期权还便宜"才有意义：** 期权反推的是风险中性概率，通常已经包含尾部溢价，也就是比真实概率偏高。合约价格连这个都不到，才算真的便宜。
+
+**局限：**
+- 两边结算用的指数不同：Kalshi 用 CF Benchmarks BRTI 的最后一分钟均价，Deribit 期权按 08:00 UTC 结算。
+- 结算时间点也不一定一致。
+- 最重要的一点：**大多数彩票会到期归零**，命中的那一次才可能赚回很多倍。
+
+**资金纪律（代码强制执行，模拟盘和实盘都适用）：**
+- 单注 ≤ $5（`tail.max_usd_per_bet`）。
+- 每个自然季度合计 ≤ $30（`tail.quarterly_budget_usd`），超出部分会被风控拒绝。
+- 面板显示本季度已用金额。
+
+**运行方式：** 每 5 分钟和代码扫描一起运行，不花 AI token。也可以手动运行一次：
+```bash
+python -m arbdesk tail      # 列出定价结果，* 表示便宜的票
+```
+
+---
+
 ## 三、安全设计
 
 ### 1. 加密保险库（`data/vault.json`）
@@ -226,6 +260,8 @@ arbdesk/
   pmus.py      Polymarket US：数据、AI 候选、FOK 下单（官方 SDK）
   venues.py    三个预测市场的统一接口
   crossvenue.py  跨平台同一事件匹配（代码粗筛 + AI 判断 + 缓存）与计价
+  deribit.py   Deribit 公开期权链 → 波动率曲线 → 到期价格概率（含 skew 修正）
+  tail.py      BTC/ETH 价格合约提取（Kalshi 行权价字段 / Polymarket US 标题）与黑天鹅定价
 scripts/start_arbdesk.ps1  Windows 启动脚本（可放进开机启动）
   service.py   代码扫描（每 5 分钟）+ AI（每小时、有变化才调用）→ 生成建议
   storage.py   本地 SQLite

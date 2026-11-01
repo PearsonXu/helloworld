@@ -16,7 +16,8 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import crossvenue, risk
+from . import crossvenue, risk, tail
+from .deribit import DeribitClient, build_smiles
 from .config import Settings
 from .llm import Analyst, BudgetExceeded, forecast_markets
 from .scanners import run_scan
@@ -41,6 +42,7 @@ class Desk:
         self.running = False
         self.venues: dict[str, Venue] = build_venues(settings)
         self.last_run: dict[str, str] = {}
+        self.deribit = DeribitClient()
 
     # ------------------------------------------------------------------
     def run_cycle(self, use_llm: bool = True) -> dict:
@@ -60,6 +62,8 @@ class Desk:
                 result[name] = self.venue_cycle(venue, use_llm, settle=use_llm)
             if self.settings.crossvenue.enabled:
                 result["crossvenue"] = self.crossvenue_cycle(use_llm)
+            if self.settings.tail.enabled:
+                result["tail"] = self.tail_cycle()
             if use_llm:
                 result["pruned_scans"] = self.store.prune_scans()
             self.last_run["scan"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -288,6 +292,67 @@ class Desk:
                                     dedupe_key=f"cross:{o['key']}:{o['direction']}")
         out["opportunities"] = len(opps)
         return out
+
+
+    # ------------------------------------------------------------------
+    # Black-swan tickets: crypto threshold contracts vs Deribit options
+    # ------------------------------------------------------------------
+    def tail_cycle(self) -> dict:
+        cfg = self.settings.tail
+        errors: dict[str, str] = {}
+        smiles = {}
+        for ccy in cfg.currencies:
+            try:
+                smiles[ccy] = build_smiles(self.deribit.option_summaries(ccy))
+            except Exception as e:
+                errors[f"deribit:{ccy}"] = f"{type(e).__name__}: {str(e)[:150]}"
+        contracts = []
+        if "kalshi" in cfg.venues and "kalshi" in self.venues:
+            k = self.venues["kalshi"]
+            for series in cfg.kalshi_series:
+                try:
+                    evs = k.client.events(200, series_ticker=series)
+                    contracts += tail.kalshi_contracts(
+                        [{**m, "event_title": e["title"]} for e in evs for m in e["markets"]], cfg.currencies)
+                except Exception as e:
+                    errors[f"kalshi:{series}"] = f"{type(e).__name__}: {str(e)[:150]}"
+        if "polymarket_us" in cfg.venues and "polymarket_us" in self.venues:
+            u = self.venues["polymarket_us"]
+            found = [c for m in u.last_markets if (c := tail.title_contract(m, cfg.currencies, "polymarket_us"))]
+            for c in found[: cfg.max_pmus_quotes]:  # quotes only for parsed crypto contracts
+                try:
+                    md = u.client.bbo(c.market_id).get("marketData", {})
+                    c.yes_bid = float(md["bestBid"]["value"]) if md.get("bestBid") else None
+                    c.yes_ask = float(md["bestAsk"]["value"]) if md.get("bestAsk") else None
+                    contracts.append(c)
+                except Exception as e:
+                    errors[f"pmus:{c.market_id}"] = f"{type(e).__name__}: {str(e)[:150]}"
+        fees = {n: v.cfg.taker_fee_rate for n, v in self.venues.items()}
+        rows = tail.evaluate(contracts, smiles, cfg, fees)
+        cheap = [r for r in rows if r["cheap"]]
+        spent = self.store.tail_spent_quarter()
+        self.store.add_scan({"contracts": len(contracts), "priced": len(rows), "errors": errors,
+                             # the cheap side of each contract is what matters for tail tickets
+                             "rows": [r for r in rows if r["price"] <= 0.5][:40], "spent_quarter": spent,
+                             "budget_quarter": cfg.quarterly_budget_usd}, cheap, "tail")
+        for r in cheap[:3]:
+            shares = max(r["min_size"], float(int(cfg.max_usd_per_bet / r["price"])))
+            payload = {
+                "kind": "tail",
+                "title": f"黑天鹅彩票：{r['label'][:60]} 买 {r['side']} @ {r['price'] * 100:.1f}¢",
+                "rationale": f"期权市场反推概率 {r['implied'] * 100:.1f}%，合约只卖 {r['price'] * 100:.1f}¢"
+                             f"（{r['ratio']}倍）。最多亏 ${shares * r['price']:.2f}，命中兑付 ${shares:.0f}。"
+                             "这不是套利：大多数这类合约到期归零。",
+                "confidence": round(min(0.9, r["implied"]), 2),
+                "legs": [{"exchange": r["venue"], "market_id": r["market_id"], "token_id": r["token_id"],
+                          "outcome": r["side"], "label": r["label"], "side": "buy", "shares": shares,
+                          "limit_price": r["price"]}],
+                "exit_plan": "持有到结算；不追加、不补仓",
+            }
+            _, errs = risk.validate(payload, self.settings, self.store)
+            self.store.add_proposal(None, payload, "pending", "; ".join(errs),
+                                    dedupe_key=f"tail:{r['venue']}:{r['market_id']}:{r['side']}")
+        return {"contracts": len(contracts), "priced": len(rows), "cheap": len(cheap), "errors": errors}
 
 
 class Scheduler(threading.Thread):

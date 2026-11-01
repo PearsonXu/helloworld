@@ -109,6 +109,7 @@ def main() -> None:
     vp = sub.add_parser("venue", help="run one prediction venue: settle, scan, AI forecasts")
     vp.add_argument("name", choices=VENUES)
     vp.add_argument("--no-llm", action="store_true")
+    sub.add_parser("tail", help="price crypto threshold contracts against Deribit options once")
     pmp = sub.add_parser("polymarket", help="same as: venue polymarket")
     pmp.add_argument("--no-llm", action="store_true")
     sub.add_parser("proposals", help="list proposals")
@@ -182,6 +183,19 @@ def main() -> None:
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
     elif args.cmd == "scan":
         print(json.dumps(desk.run_cycle(use_llm=not args.no_llm), ensure_ascii=False, indent=2))
+    elif args.cmd == "tail":
+        if "polymarket_us" in desk.venues:  # its contracts come from the latest venue scan
+            try:
+                desk.venues["polymarket_us"].scan()
+            except Exception as e:
+                print(f"polymarket_us scan failed: {type(e).__name__}: {e}")
+        out = desk.tail_cycle()
+        scan = store.scans(1, source="tail")[0]
+        for r in scan["summary"]["rows"][:15]:
+            print(f"{'*' if r['cheap'] else ' '} {r['venue']:13} {r['currency']} {r['kind']:11} "
+                  f"{r['lo'] or r['hi']:>10} {r['expiry'][:10]} {r['side']:3} {r['price'] * 100:5.1f}c "
+                  f"implied {r['implied'] * 100:5.1f}%  x{r['ratio']}")
+        print(json.dumps(out, ensure_ascii=False, indent=2))
     elif args.cmd in ("venue", "polymarket"):
         name = getattr(args, "name", "polymarket")
         if name not in desk.venues:

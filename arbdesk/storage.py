@@ -220,6 +220,19 @@ class Store:
     def pair_matches(self, limit: int = 50) -> list[dict]:
         return self._rows("SELECT * FROM pair_matches ORDER BY ts DESC LIMIT ?", (limit,))
 
+    # black-swan budget --------------------------------------------------
+    @staticmethod
+    def quarter_start() -> str:
+        now = datetime.now(timezone.utc)
+        return datetime(now.year, 3 * ((now.month - 1) // 3) + 1, 1, tzinfo=timezone.utc).isoformat(timespec="seconds")
+
+    def tail_spent_quarter(self) -> float:
+        """Cost of tail ("black swan") bets placed this calendar quarter, paper and live."""
+        return self._rows(
+            "SELECT COALESCE(SUM(t.cost_usd + t.fee_usd), 0) AS s FROM trades t "
+            "JOIN proposals p ON p.id = t.proposal_id "
+            "WHERE json_extract(p.payload, '$.kind') = 'tail' AND t.ts >= ?", (self.quarter_start(),))[0]["s"]
+
     # maintenance --------------------------------------------------------
     def prune_scans(self, keep_days: float = 2.0) -> int:
         """Frequent scans add up: drop old scans that found nothing (keeps the latest per source)."""

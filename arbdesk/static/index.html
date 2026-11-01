@@ -79,6 +79,13 @@
       <tbody id="opps"></tbody></table>
   </section>
   <div id="venues" style="display:grid;gap:16px"></div>
+  <section id="tailSection">
+    <h2>黑天鹅定价 <span class="muted">（预测市场的 BTC/ETH 价格合约 vs Deribit 期权反推概率；不是套利）</span> <span class="muted" id="tailmeta"></span></h2>
+    <div class="stats" id="tailstats"></div>
+    <table><thead><tr><th>平台</th><th>合约</th><th>到期</th><th>买</th><th>价格</th><th>期权反推概率</th><th>倍数</th><th>扣费后优势</th></tr></thead>
+      <tbody id="tailrows"></tbody></table>
+    <p class="muted">期权概率是风险中性概率，通常已含"尾部溢价"；合约价格低于它才算便宜。两边结算指数和时间点不完全相同（Kalshi 用 CF Benchmarks，Deribit 为 08:00 UTC）。大多数彩票到期归零，只用季度预算内的小钱。</p>
+  </section>
   <section id="crossSection">
     <h2>跨平台套利 <span class="muted">（Kalshi ↔ Polymarket US，同一事件一边买 YES 一边买 NO）</span> <span class="muted" id="crossmeta"></span></h2>
     <table><thead><tr><th>事件</th><th>组合</th><th>份数</th><th>成本$</th><th>兑付$</th><th>利润</th></tr></thead>

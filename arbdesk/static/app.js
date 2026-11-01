@@ -113,6 +113,7 @@ async function refresh() {
 
   await renderVenues();
   await renderCross();
+  await renderTail();
 
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
@@ -158,6 +159,31 @@ async function renderVenues() {
         <tbody>${fc}</tbody></table>
     </section>`;
   }).join("");
+}
+
+async function renderTail() {
+  const t = await api("/api/tail");
+  $("tailSection").style.display = t.enabled ? "" : "none";
+  if (!t.enabled) return;
+  const sc = t.scan;
+  const errs = sc ? Object.keys(sc.summary.errors || {}) : [];
+  $("tailmeta").textContent = sc ? `${sc.ts} · 合约 ${sc.summary.contracts} · 已定价 ${sc.summary.priced}` +
+    (errs.length ? ` · 失败: ${errs.join(", ")}` : "") : "尚未扫描";
+  const left = t.budget_quarter - t.spent_quarter;
+  $("tailstats").innerHTML = `
+    <div class="stat"><b class="${left > 0 ? "" : "bad"}">$${num(t.spent_quarter)} / $${num(t.budget_quarter)}</b><span>本季度黑天鹅预算已用</span></div>
+    <div class="stat"><b>$${num(t.max_usd_per_bet)}</b><span>单注上限</span></div>
+    <div class="stat"><b>${sc ? sc.opportunities.length : 0}</b><span>当前便宜的彩票</span></div>`;
+  const rows = sc ? sc.summary.rows || [] : [];
+  const strike = (r) => r.kind === "between" ? `${r.lo}–${r.hi}` : (r.lo ?? r.hi);
+  const kindLabel = { above: "高于", below: "低于", between: "区间", touch_above: "触及≥", touch_below: "触及≤" };
+  $("tailrows").innerHTML = rows.map((r) => `<tr class="${r.cheap ? "" : "muted"}">
+    <td>${esc(VENUE_LABEL[r.venue] || r.venue)}</td>
+    <td>${esc(r.currency)} ${esc(kindLabel[r.kind] || r.kind)} ${esc(strike(r))}<br><span class="muted">${esc(r.label)}</span></td>
+    <td>${esc(r.expiry.slice(0, 16))}</td><td>${esc(r.side)}</td><td>${num(r.price * 100, 1)}¢</td>
+    <td>${num(r.implied * 100, 1)}%</td><td class="${r.cheap ? "good" : ""}">${num(r.ratio, 2)}×</td>
+    <td>${num(r.edge * 100, 1)}¢</td></tr>`).join("")
+    || `<tr><td colspan="8" class="muted">暂无可定价的合约</td></tr>`;
 }
 
 async function renderCross() {

@@ -115,6 +115,13 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
                         "forecasts": store.forecasts(30, venue=name), "scores": store.forecast_scores(name)})
         return out
 
+    @app.get("/api/tail", dependencies=[Depends(auth)])
+    def tail_view():
+        latest = store.scans(1, source="tail")
+        return {"enabled": settings.tail.enabled, "scan": latest[0] if latest else None,
+                "spent_quarter": store.tail_spent_quarter(), "budget_quarter": settings.tail.quarterly_budget_usd,
+                "max_usd_per_bet": settings.tail.max_usd_per_bet}
+
     @app.get("/api/crossvenue", dependencies=[Depends(auth)])
     def cross():
         latest = store.scans(1, source="crossvenue")

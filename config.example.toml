@@ -110,3 +110,19 @@ ai_horizon_days = [1, 60]
 max_live_usd_per_day = 20
 max_live_exposure_usd = 50
 price_tolerance = 0.01
+
+# ---------------------------------------------------------------------------
+# Black-swan tickets: BTC/ETH price contracts on Kalshi / Polymarket US priced
+# against Deribit's option chain (public data only). Code only, no AI tokens.
+[tail]
+enabled = true
+currencies = ["BTC", "ETH"]
+venues = ["kalshi", "polymarket_us"]
+kalshi_series = ["KXBTCD", "KXBTC", "KXETHD", "KXETH"]   # Kalshi crypto series to scan
+max_price = 0.15               # only sides costing <= 15 cents ("lottery tickets")
+min_edge = 0.02                # option-implied probability - price - fee
+min_ratio = 1.5                # option-implied probability / price
+max_expiry_gap_days = 45       # contract date must be near a listed option expiry
+max_usd_per_bet = 5
+quarterly_budget_usd = 30      # hard cap on all tail bets per calendar quarter (paper and live)
+max_pmus_quotes = 40

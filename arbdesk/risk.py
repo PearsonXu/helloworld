@@ -39,6 +39,9 @@ def validate(payload: dict, settings: Settings, store: Store) -> tuple[list[dict
     else:
         legs = _validate_exchange_legs(legs_in, settings, errors)
 
+    if payload.get("kind") == "tail" and legs:
+        errors += _tail_checks(legs, settings, store)
+
     if sum(l["usd"] for l in legs) > r.max_capital_usd:
         errors.append(f"total size exceeds max_capital_usd {r.max_capital_usd}")
 
@@ -58,6 +61,19 @@ def is_live(legs: list[dict], settings: Settings) -> bool:
     if legs[0]["exchange"] in PREDICTION_VENUES:
         return settings.venue_cfg(legs[0]["exchange"]).mode == "live"
     return settings.risk.mode == "live"
+
+
+def _tail_checks(legs: list[dict], settings: Settings, store: Store) -> list[str]:
+    """Black-swan tickets: small per bet, and a hard budget per calendar quarter."""
+    t, errors = settings.tail, []
+    for i, l in enumerate(legs):
+        if l["usd"] > t.max_usd_per_bet:
+            errors.append(f"leg {i}: ${l['usd']:.2f} exceeds tail.max_usd_per_bet ({t.max_usd_per_bet})")
+    spent, total = store.tail_spent_quarter(), sum(l["usd"] for l in legs)
+    if spent + total > t.quarterly_budget_usd:
+        errors.append(f"black-swan budget: ${spent:.2f} used this quarter + ${total:.2f} "
+                      f"> tail.quarterly_budget_usd ({t.quarterly_budget_usd})")
+    return errors
 
 
 def _live_prediction_checks(legs: list[dict], venue: str, settings: Settings, store: Store) -> list[str]:
