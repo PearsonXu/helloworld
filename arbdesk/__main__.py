@@ -121,6 +121,7 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("panel", help="start the local web panel + scheduler")
     p.add_argument("--no-scheduler", action="store_true")
+    p.add_argument("--no-browser", action="store_true", help="don't open the panel in the browser")
     s = sub.add_parser("scan", help="run one scan (and AI analysis) now")
     s.add_argument("--no-llm", action="store_true")
     vp = sub.add_parser("venue", help="run one prediction venue: settle, scan, AI forecasts")
@@ -210,6 +211,11 @@ def main() -> None:
               f"{settings.llm.interval_minutes} min ({desk.analyst.model}); "
               f"budget {settings.llm.daily_token_budget} tokens/day, ${settings.llm.monthly_usd_cap}/month\n"
               f"  keep this window open; the computer must not sleep\n")
+        if not args.no_browser:  # opening it for you avoids copying a long, wrapped link by hand
+            import threading
+            import webbrowser
+            threading.Timer(2.0, lambda: webbrowser.open(url)).start()
+        print(f"  浏览器没有自动打开的话，复制上面整行链接；token 也保存在 {settings.data_dir / 'panel_token'}\n")
         import uvicorn
         uvicorn.run(create_app(settings, store, desk, executor, token),
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
