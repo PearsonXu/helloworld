@@ -195,6 +195,13 @@ capital_per_strategy = 25
 fee_pct = 0.6                  # per fill; check your exchange fee tier
 slippage_pct = 0.05
 fee_pct_low = 0.1              # backtests are also run at this fee, to show what a cheaper fee tier changes
+# Buy/sell signal emails for strategies whose backtest qualifies (needs [email] set up).
+signal_alerts = true
+signal_strategies = ["sma_cross", "donchian", "trend_fast", "custom1"]   # slow enough to follow by hand
+signal_min_return_pct = 0      # backtest must make money...
+signal_min_excess_pct = 0      # ...beat buy-and-hold by more than this (percentage points)...
+signal_max_drawdown_pct = 25   # ...with a drawdown no larger than this...
+signal_min_trades = 2          # ...over at least this many trades
 
 [strategies.params.dca]
 timeframe = "1d"
@@ -307,3 +314,4 @@ to_addr = ""                   # where to send alerts (can be the same address)
 min_level = "warning"          # or "critical" for only the most severe
 categories = ["move1h", "move24h", "depeg", "ivjump", "ivhigh", "funding", "tail_cheap", "dip_fill", "lppls"]
 max_per_hour = 4
+timezone = "America/New_York"  # times in strategy signal emails (UTC is shown too)
