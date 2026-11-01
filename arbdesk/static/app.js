@@ -115,6 +115,7 @@ async function refresh() {
   await renderCross();
   await renderTail();
   await renderAlerts();
+  await renderDip();
 
   $("trades").innerHTML = trades.map((t) => `<tr><td>${esc(t.ts)}</td><td>${esc(t.mode)}</td><td>${esc(t.exchange)}</td>
     <td>${esc(t.symbol)}</td><td>${esc(t.side)}</td><td>${num(t.amount, 6)}</td><td>${num(t.price, 4)}</td>
@@ -159,6 +160,23 @@ async function renderVenues() {
       <table><thead><tr><th>时间</th><th>问题</th><th>市场价</th><th>AI 概率</th><th>置信度</th><th>结果</th><th>理由</th></tr></thead>
         <tbody>${fc}</tbody></table>
     </section>`;
+  }).join("");
+}
+
+async function renderDip() {
+  const d = await api("/api/dip");
+  window.__dip = d;
+  $("dipSection").style.display = d.enabled ? "" : "none";
+  if (!d.enabled) return;
+  $("dipmeta").textContent = `${d.mode === "live" ? "实盘" : "模拟盘"} · ${d.exchange}`;
+  $("dipstats").innerHTML = `
+    <div class="stat"><b>$${num(d.open_usd)} / $${num(d.max_open_usd)}</b><span>挂单中金额</span></div>
+    <div class="stat"><b>$${num(d.filled_quarter_usd)} / $${num(d.quarterly_budget_usd)}</b><span>本季度已成交 / 季度预算</span></div>`;
+  $("diprows").innerHTML = d.symbols.map((r) => {
+    const open = r.open.map((o) => `${num(o.level_pct, 0)}% @ ${num(o.price, 2)}`).join("<br>") || '<span class="muted">无</span>';
+    const pnl = r.unrealized == null ? "—" : `<span class="${r.unrealized >= 0 ? "good" : "bad"}">${num(r.unrealized)}</span>`;
+    return `<tr><td>${esc(r.symbol)}</td><td>${r.price == null ? "—" : num(r.price, 2)}</td><td>${open}</td>
+      <td>${r.filled.length} 笔</td><td>${r.position_qty ? "$" + num(r.position_cost) : "—"}</td><td>${pnl}</td></tr>`;
   }).join("");
 }
 
@@ -241,6 +259,19 @@ document.addEventListener("click", async (e) => {
   refresh();
 });
 $("run").onclick = () => api("/api/run", { use_llm: true }).then(refresh);
+$("dipArm").onclick = async () => {
+  const live = window.__dip && window.__dip.mode === "live";
+  let body = {};
+  if (live) {
+    const typed = prompt("⚠️ 将在交易所挂出真钱限价买单（会一直挂着，直到成交或撤销）。\n确认请输入大写 LIVE：");
+    if (typed !== "LIVE") return;
+    body = { confirm_live: "LIVE" };
+  } else if (!confirm("按现价重新布置模拟挂单？")) return;
+  const r = await api("/api/dip/arm", body);
+  if (r.errors && r.errors.length) alert(r.errors.join("\n"));
+  refresh();
+};
+$("dipCancel").onclick = () => confirm("撤销全部抄底挂单？") && api("/api/dip/cancel", {}).then(refresh);
 $("ackAll").onclick = () => api("/api/alerts/ack", {}).then(refresh);
 $("halt").onclick = () => confirm("立即停止所有实盘下单？") && api("/api/halt", {}).then(refresh);
 $("resume").onclick = () => confirm("确认已在交易所 / 预测市场检查过持仓，恢复实盘？") && api("/api/resume", {}).then(refresh);

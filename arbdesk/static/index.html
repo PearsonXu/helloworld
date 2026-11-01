@@ -84,6 +84,14 @@
       <tbody id="opps"></tbody></table>
   </section>
   <div id="venues" style="display:grid;gap:16px"></div>
+  <section id="dipSection">
+    <div class="row"><h2 style="margin:0">抄底挂单 <span class="muted" id="dipmeta"></span></h2><span style="flex:1"></span>
+      <button class="ghost" id="dipArm">重新布置挂单</button> <button class="danger" id="dipCancel">撤销全部挂单</button></div>
+    <div class="stats" id="dipstats" style="margin-top:10px"></div>
+    <table><thead><tr><th>标的</th><th>现价</th><th>挂单（档位 @ 价格）</th><th>已成交</th><th>持仓成本</th><th>浮动盈亏</th></tr></thead>
+      <tbody id="diprows"></tbody></table>
+    <p class="muted">远低于现价的限价买单，用来接住暴跌插针。只买现货、不加杠杆、不自动卖出；价格上涨后挂单跟着上移，下跌时不跟。模拟盘用 1 分钟 K 线最低价判断是否成交。</p>
+  </section>
   <section id="tailSection">
     <h2>黑天鹅定价 <span class="muted">（预测市场的 BTC/ETH 价格合约 vs Deribit 期权反推概率；不是套利）</span> <span class="muted" id="tailmeta"></span></h2>
     <div class="stats" id="tailstats"></div>

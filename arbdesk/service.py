@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import crossvenue, risk, tail
 from .alerts import AlertMonitor
+from .dip import DipManager
 from .deribit import DeribitClient, build_smiles
 from .config import Settings
 from .llm import Analyst, BudgetExceeded, forecast_markets
@@ -46,6 +47,7 @@ class Desk:
         self.deribit = DeribitClient()
         self.last_smiles: dict = {}
         self.alerts = AlertMonitor(settings, store)
+        self.dip = DipManager(settings, store)
 
     # ------------------------------------------------------------------
     def run_cycle(self, use_llm: bool = True) -> dict:
@@ -67,6 +69,11 @@ class Desk:
                 result["crossvenue"] = self.crossvenue_cycle(use_llm)
             if self.settings.tail.enabled:
                 result["tail"] = self.tail_cycle()
+            if self.settings.dip.enabled:
+                try:
+                    result["dip"] = self.dip.cycle()
+                except Exception as e:
+                    log.warning("dip ladder cycle failed: %s", e)
             if self.settings.alerts.enabled:
                 ok, failed = self._source_health(summary, result)
                 try:

@@ -85,6 +85,22 @@ CREATE TABLE IF NOT EXISTS alerts (
     detail TEXT,
     acked INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS dip_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    mode TEXT NOT NULL,             -- paper / live
+    exchange TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    level_pct REAL NOT NULL,
+    anchor REAL NOT NULL,
+    price REAL NOT NULL,
+    usd REAL NOT NULL,
+    amount REAL NOT NULL,
+    status TEXT NOT NULL,           -- open / filled / cancelled
+    exchange_order_id TEXT,
+    fill_price REAL,
+    updated_ts TEXT
+);
 CREATE TABLE IF NOT EXISTS flags (
     name TEXT PRIMARY KEY,
     value TEXT NOT NULL,
@@ -292,6 +308,40 @@ class Store:
                 self.conn.execute("UPDATE alerts SET acked = 1 WHERE acked = 0")
             else:
                 self.conn.execute("UPDATE alerts SET acked = 1 WHERE id = ?", (alert_id,))
+
+    # dip-buy ladder -------------------------------------------------------
+    def add_dip_order(self, **o) -> int:
+        cols = ["mode", "exchange", "symbol", "level_pct", "anchor", "price", "usd", "amount", "exchange_order_id"]
+        return self._insert(
+            f"INSERT INTO dip_orders (ts, status, {', '.join(cols)}) VALUES (?, 'open', {', '.join('?' * len(cols))})",
+            (now_iso(), *[o.get(c) for c in cols]))
+
+    def dip_orders(self, status: str | None = None, symbol: str | None = None, mode: str | None = None,
+                   limit: int = 200) -> list[dict]:
+        where, params = [], []
+        for col, val in (("status", status), ("symbol", symbol), ("mode", mode)):
+            if val is not None:
+                where.append(f"{col} = ?")
+                params.append(val)
+        sql = "SELECT * FROM dip_orders" + (" WHERE " + " AND ".join(where) if where else "")
+        return self._rows(sql + " ORDER BY id DESC LIMIT ?", (*params, limit))
+
+    def set_dip_status(self, oid: int, status: str, fill_price: float | None = None) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE dip_orders SET status = ?, fill_price = COALESCE(?, fill_price), "
+                              "updated_ts = ? WHERE id = ?", (status, fill_price, now_iso(), oid))
+
+    def dip_open_usd(self, mode: str) -> float:
+        return self._rows("SELECT COALESCE(SUM(usd), 0) AS s FROM dip_orders WHERE status = 'open' AND mode = ?",
+                          (mode,))[0]["s"]
+
+    def dip_filled_usd_quarter(self, mode: str) -> float:
+        return self._rows("SELECT COALESCE(SUM(usd), 0) AS s FROM dip_orders WHERE status = 'filled' "
+                          "AND mode = ? AND updated_ts >= ?", (mode, self.quarter_start()))[0]["s"]
+
+    def latest_sample(self, key: str) -> float | None:
+        rows = self._rows("SELECT value FROM samples WHERE key = ? ORDER BY id DESC LIMIT 1", (key,))
+        return rows[0]["value"] if rows else None
 
     # maintenance --------------------------------------------------------
     def prune_scans(self, keep_days: float = 2.0) -> int:

@@ -216,6 +216,48 @@ python -m arbdesk alerts --ack    # 全部标为已读
 
 ---
 
+## 二点九、抄底挂单（默认模拟盘）
+
+**做什么：** 在远低于现价的位置挂限价买单，接住暴跌时几分钟内的"插针"。
+- 默认档位：BTC −25%、−40%、−55%；ETH −30%、−45%、−60%；每档 $5。
+- 只买现货、不加杠杆、**不自动卖出**。成交后作为持仓记录，面板显示成本和浮动盈亏。
+
+**挂单位置怎么调整：** 布置挂单时以当前价格为基准。之后价格上涨超过 10%，挂单整体上移（模拟盘自动移，实盘发提醒请你重新布置）；价格下跌时**不跟着下移**，否则就成了追跌。
+
+**资金上限：**
+- 所有挂单合计 ≤ $30（`max_open_usd`）。
+- 每个季度成交加挂单合计 ≤ $60（`quarterly_budget_usd`）。
+- 超出上限会拒绝布置，并保留原来的挂单不动。
+
+**模拟盘：**
+- 程序自动布置挂单。
+- 每 5 分钟读取交易所 1 分钟 K 线的最低价，最低价触及挂单价就按挂单价成交，手续费按 `maker_fee_pct` 估算。所以几分钟内的插针也能模拟到。
+- 成交时会出现提醒。
+
+**实盘：**
+1. 在交易所创建 API key：只开交易权限、**关闭提币**、绑定 IP 白名单。然后存进保险库：
+   ```bash
+   python -m arbdesk vault set EXCHANGE_COINBASE_API_KEY
+   python -m arbdesk vault set EXCHANGE_COINBASE_SECRET
+   ```
+2. 在 `config.toml` 里设置 `[dip] mode = "live"`。
+3. 布置挂单：运行 `python -m arbdesk dip arm --live` 并输入 `LIVE`，或者在面板点"重新布置挂单"。实盘挂单会一直挂在交易所，直到成交或撤销，所以**在布置这一步统一确认一次**，之后不再逐笔确认。
+4. 布置前会检查交易所的最小下单量，低于最小值会拒绝并说明原因。
+
+**紧急停止对挂单的影响：**
+- **手动**紧急停止（面板按钮或 `halt` 命令）会立刻撤销全部实盘挂单。
+- 极端行情提醒触发的**自动**停止会保留挂单，因为暴跌正是这些挂单在等的时刻，而且金额已经设好上限。自动停止期间不会布置新的挂单。
+
+**常用命令：**
+```bash
+python -m arbdesk dip status    # 当前挂单、成交和持仓
+python -m arbdesk dip check     # 立即检查一次是否成交
+python -m arbdesk dip arm       # 按现价重新布置（实盘需要加 --live）
+python -m arbdesk dip cancel    # 撤销全部挂单
+```
+
+---
+
 ## 三、安全设计
 
 ### 1. 加密保险库（`data/vault.json`）
@@ -299,6 +341,7 @@ arbdesk/
   deribit.py   Deribit 公开期权链 → 波动率曲线 → 到期价格概率（含 skew 修正）
   tail.py      BTC/ETH 价格合约提取（Kalshi 行权价字段 / Polymarket US 标题）与黑天鹅定价
   alerts.py    极端行情提醒（价格、波动率、资金费率、稳定币、数据源）
+  dip.py       抄底挂单（模拟：1 分钟 K 线最低价成交；实盘：GTC 限价单）
 scripts/start_arbdesk.ps1  Windows 启动脚本（可放进开机启动）
   service.py   代码扫描（每 5 分钟）+ AI（每小时、有变化才调用）→ 生成建议
   storage.py   本地 SQLite

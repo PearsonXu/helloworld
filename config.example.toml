@@ -146,3 +146,29 @@ outage_consecutive = 3        # a working source failing 3 scans in a row
 cooldown_hours = 6            # same alert isn't repeated within 6 h unless it escalates
 desktop_notify = true         # Windows pop-up (needs plyer, installed by requirements.txt)
 halt_on_critical = true       # critical alert engages the kill switch if any live mode is on
+
+# ---------------------------------------------------------------------------
+# Dip-buy ladder: resting limit buys far below the market (spot, no leverage, no auto-sell).
+# Paper mode simulates fills from 1-minute candle lows and arms itself.
+# Live: put exchange keys in the vault (trade permission only, withdrawals OFF), set
+# mode = "live", then arm with `python -m arbdesk dip arm --live` (type LIVE) or the panel.
+[dip]
+enabled = true
+mode = "paper"
+exchange = "coinbase"          # US-available, low minimum order size
+max_open_usd = 30              # all resting dip orders together
+quarterly_budget_usd = 60      # filled + resting per calendar quarter
+rearm_pct = 10                 # ladder moves up after a 10% rise (never down)
+maker_fee_pct = 0.6            # paper-fill fee estimate; check your fee tier
+auto_arm_paper = true
+keep_orders_on_auto_halt = true   # alert-triggered halt keeps dip orders; manual halt cancels them
+
+[[dip.ladders]]
+symbol = "BTC/USD"
+levels_pct = [-25, -40, -55]
+usd_per_level = 5
+
+[[dip.ladders]]
+symbol = "ETH/USD"
+levels_pct = [-30, -45, -60]
+usd_per_level = 5

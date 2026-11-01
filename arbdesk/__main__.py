@@ -110,6 +110,9 @@ def main() -> None:
     vp.add_argument("name", choices=VENUES)
     vp.add_argument("--no-llm", action="store_true")
     sub.add_parser("tail", help="price crypto threshold contracts against Deribit options once")
+    dp = sub.add_parser("dip", help="dip-buy ladder: status | arm [--live] | check | cancel")
+    dp.add_argument("action", choices=["status", "arm", "check", "cancel"])
+    dp.add_argument("--live", action="store_true", help="confirm arming real-money resting orders")
     al = sub.add_parser("alerts", help="run the extreme-market checks once and list recent alerts")
     al.add_argument("--ack", action="store_true", help="mark all alerts as read")
     pmp = sub.add_parser("polymarket", help="same as: venue polymarket")
@@ -185,6 +188,25 @@ def main() -> None:
                     host=settings.panel.host, port=settings.panel.port, log_level="warning")
     elif args.cmd == "scan":
         print(json.dumps(desk.run_cycle(use_llm=not args.no_llm), ensure_ascii=False, indent=2))
+    elif args.cmd == "dip":
+        if args.action == "arm":
+            confirm = False
+            if settings.dip.mode == "live":
+                if not args.live:
+                    raise SystemExit("dip.mode is live: use `dip arm --live` and type LIVE")
+                confirm = input("Type LIVE to place resting real-money buy orders: ").strip() == "LIVE"
+            print(json.dumps(desk.dip.arm(confirm_live=confirm), ensure_ascii=False, indent=2))
+        elif args.action == "check":
+            print(json.dumps(desk.dip.cycle(), ensure_ascii=False, indent=2))
+        elif args.action == "cancel":
+            print(f"cancelled {desk.dip.cancel_all()} order(s)")
+        st = desk.dip.status()
+        print(f"\n{st['mode']} on {st['exchange']} · resting ${st['open_usd']:.2f}/${st['max_open_usd']} · "
+              f"filled this quarter ${st['filled_quarter_usd']:.2f}/${st['quarterly_budget_usd']}")
+        for r in st["symbols"]:
+            print(f"  {r['symbol']}: price {r['price']} · open " +
+                  ", ".join(f"{o['level_pct']:.0f}%@{o['price']:,.2f}" for o in r["open"]) +
+                  (f" · position {r['position_qty']:.6f} cost ${r['position_cost']:.2f}" if r["position_qty"] else ""))
     elif args.cmd == "alerts":
         if args.ack:
             store.ack_alerts()
@@ -226,6 +248,8 @@ def main() -> None:
         store.set_proposal_status(args.id, "rejected", "rejected by user")
     elif args.cmd == "halt":
         executor.halt(args.reason)
+        if settings.dip.mode == "live":
+            print(f"cancelled {desk.dip.cancel_all()} resting dip order(s)")
         print("live trading halted")
     elif args.cmd == "resume":
         executor.resume()

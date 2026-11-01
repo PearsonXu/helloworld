@@ -166,6 +166,24 @@ class AlertConfig:
     halt_on_critical: bool = True       # critical alert engages the kill switch when any live mode is on
 
 
+@dataclass
+class DipConfig:
+    """Resting limit buys far below the market (spot only, no leverage)."""
+    enabled: bool = True
+    mode: str = "paper"                 # "live" places real GTC orders after you type LIVE to arm
+    exchange: str = "coinbase"          # ccxt id; US-available and low minimum order size
+    ladders: list[dict] = field(default_factory=lambda: [
+        {"symbol": "BTC/USD", "levels_pct": [-25, -40, -55], "usd_per_level": 5},
+        {"symbol": "ETH/USD", "levels_pct": [-30, -45, -60], "usd_per_level": 5},
+    ])
+    max_open_usd: float = 30.0          # all resting dip orders together
+    quarterly_budget_usd: float = 60.0  # filled + resting dip buys per calendar quarter
+    rearm_pct: float = 10.0             # move the ladder up after the price rises this much (never down)
+    maker_fee_pct: float = 0.6          # paper-fill fee estimate (check your exchange's maker fee)
+    auto_arm_paper: bool = True         # paper mode arms itself; live mode is armed by you
+    keep_orders_on_auto_halt: bool = True  # an alert-triggered halt keeps resting dip orders (manual halt cancels)
+
+
 # Venue-specific defaults on top of VenueConfig's.
 KALSHI_DEFAULTS = {"environment": "demo", "min_liquidity_usd": 500}
 PMUS_DEFAULTS = {"min_liquidity_usd": 1000}
@@ -183,6 +201,7 @@ class Settings:
     crossvenue: CrossVenueConfig = field(default_factory=CrossVenueConfig)
     tail: TailConfig = field(default_factory=TailConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
+    dip: DipConfig = field(default_factory=DipConfig)
     kalshi: VenueConfig = field(default_factory=lambda: VenueConfig(**KALSHI_DEFAULTS))
     polymarket_us: VenueConfig = field(default_factory=lambda: VenueConfig(**PMUS_DEFAULTS))
 
@@ -273,6 +292,7 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         crossvenue=CrossVenueConfig(**raw.get("crossvenue", {})),
         tail=TailConfig(**raw.get("tail", {})),
         alerts=AlertConfig(**raw.get("alerts", {})),
+        dip=DipConfig(**raw.get("dip", {})),
         kalshi=VenueConfig(**{**KALSHI_DEFAULTS, **raw.get("kalshi", {})}),
         polymarket_us=VenueConfig(**{**PMUS_DEFAULTS, **raw.get("polymarket_us", {})}),
     )
@@ -282,6 +302,8 @@ def load_settings(config_path: Path | None = None, env_path: Path | None = None,
         vc = settings.venue_cfg(name)
         if vc.mode not in ("paper", "live"):
             raise ValueError(f"{name}.mode must be 'paper' or 'live'")
+    if settings.dip.mode not in ("paper", "live"):
+        raise ValueError("dip.mode must be 'paper' or 'live'")
     if settings.kalshi.environment not in ("demo", "prod"):
         raise ValueError("kalshi.environment must be 'demo' or 'prod'")
     return settings

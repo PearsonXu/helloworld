@@ -174,7 +174,23 @@ def create_app(settings: Settings, store: Store, desk: Desk, executor: Executor,
     @app.post("/api/halt", dependencies=[Depends(auth), Depends(json_only)])
     def halt():
         executor.halt("halted from panel")
+        if settings.dip.mode == "live":  # a manual halt also pulls resting dip orders
+            desk.dip.cancel_all()
         return {"ok": True}
+
+    @app.get("/api/dip", dependencies=[Depends(auth)])
+    def dip_status():
+        return desk.dip.status()
+
+    @app.post("/api/dip/arm", dependencies=[Depends(auth), Depends(json_only)])
+    async def dip_arm(request: Request):
+        body = await request.json()
+        confirm = isinstance(body, dict) and body.get("confirm_live") == "LIVE"
+        return await run_in_threadpool(desk.dip.arm, confirm)
+
+    @app.post("/api/dip/cancel", dependencies=[Depends(auth), Depends(json_only)])
+    async def dip_cancel():
+        return {"cancelled": await run_in_threadpool(desk.dip.cancel_all)}
 
     @app.post("/api/resume", dependencies=[Depends(auth), Depends(json_only)])
     def resume():
