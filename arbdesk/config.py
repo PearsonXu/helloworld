@@ -96,7 +96,7 @@ class CrossVenueConfig:
 @dataclass
 class PanelConfig:
     host: str = "127.0.0.1"
-    port: int = 8765
+    port: int = 18765  # uncommon on purpose: 8765 is used by other desktop apps
 
 
 @dataclass

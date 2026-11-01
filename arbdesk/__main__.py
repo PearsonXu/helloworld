@@ -29,6 +29,18 @@ IMPORTABLE_PREFIXES = ("LLM_API_KEY", "EXCHANGE_", "POLYMARKET_", "KALSHI_")
 VENUES = ("polymarket", "kalshi", "polymarket_us")
 
 
+def port_in_use(host: str, port: int) -> bool:
+    """True if something already answers on host:port. A connect test is used because on
+    Windows two programs can end up bound to the same port, and the browser then reaches
+    whichever one answers first."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def keep_awake() -> None:
     """Windows: ask the OS not to sleep while the panel runs (the display may still turn off).
     Released automatically when the process exits. Closing a laptop lid can still sleep it."""
@@ -181,6 +193,11 @@ def main() -> None:
         if not is_loopback(settings.panel.host):
             raise SystemExit("panel.host must be a loopback address (127.0.0.1); "
                              "use an SSH tunnel if you need remote access")
+        if port_in_use(settings.panel.host, settings.panel.port):
+            raise SystemExit(
+                f"端口 {settings.panel.port} 已被其他程序占用（浏览器会打开那个程序，而不是面板）。\n"
+                f"请在 config.toml 的 [panel] 里把 port 改成别的数字，例如 port = 18799，然后重新启动。\n"
+                f"(port {settings.panel.port} is already in use by another program; set [panel] port in config.toml)")
         token = load_or_create_token(settings.data_dir)
         if not args.no_scheduler:
             keep_awake()

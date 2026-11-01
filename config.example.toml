@@ -51,7 +51,7 @@ max_usd_per_pair = 20
 
 [panel]
 host = "127.0.0.1"             # loopback only; enforced
-port = 8765
+port = 18765                   # change if another app already uses this port
 
 [polymarket]                   # polymarket.com (international). NOT available to US residents.
 enabled = true                 # US users: set false (or keep for paper research only)
