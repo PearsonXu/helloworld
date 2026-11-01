@@ -49,6 +49,11 @@ def ask_password(prompt: str = "Vault master password: ") -> str:
 
 
 def vault_command(args, vault: Vault) -> None:
+    if args.action != "init" and not vault.exists():
+        raise SystemExit("还没有创建保险库，请先运行: python -m arbdesk vault init\n"
+                         "(no vault yet: run `python -m arbdesk vault init` first)")
+    if args.action == "init" and vault.exists():
+        raise SystemExit(f"保险库已存在: {vault.path}\n(vault already exists; use `vault set NAME` to add keys)")
     try:
         if args.action == "init":
             pw = ask_password("New master password (>= 12 chars): ")
