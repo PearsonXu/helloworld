@@ -174,7 +174,8 @@ class Executor:
             if need <= 1e-9:
                 break
         if need > 1e-9:
-            raise ValueError(f"not enough depth at <= {cap:.4f}")
+            raise ValueError(f"盘口在 ≤{cap * 100:.1f}¢ 已没有足够的卖单（需要 {leg['shares']:g} 份，"
+                             f"只剩 {leg['shares'] - need:g} 份）：价格已变动或合约已到期，机会已不存在")
         depth = sum(sz for p, sz in asks if p <= cap + 1e-9)
         return cost / leg["shares"], cost, depth
 
