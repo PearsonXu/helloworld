@@ -522,8 +522,8 @@ async function loadSettings() {
           placeholder="${p.has_key ? esc((p.key_from_env ? "来自环境变量 " + p.key_env + "：" : "已保存：") + p.key_preview) + "（留空不修改）" : (p.key_env ? "或设置环境变量 " + p.key_env : "")}"></label>
         <label>模型<input data-f="model" list="models-${p.id}" value="${esc(p.model)}" placeholder="点右侧获取模型列表"><datalist id="models-${p.id}"></datalist></label>
       </div>
-      ${p.id === "claude" ? `<div class="row" style="margin-top:6px;flex-wrap:wrap">选型号：${CLAUDE_MODELS.map(([m, t]) =>
-        `<button class="btn small ${p.model === m ? "primary" : ""}" onclick="pickModel('claude', '${m}')">${t}</button>`).join("")}</div>` : ""}
+      ${MODEL_CHIPS[p.id] ? `<div class="row" style="margin-top:6px;flex-wrap:wrap">选型号：${MODEL_CHIPS[p.id].map(([m, t]) =>
+        `<button class="btn small ${p.model === m ? "primary" : ""}" onclick="pickModel('${p.id}', '${m}')">${t}</button>`).join("")}</div>` : ""}
       <div class="row" style="margin-top:8px">
         <button class="btn small primary" onclick="saveProvider('${p.id}')">保存</button>
         <button class="btn small" onclick="fetchModels('${p.id}')">获取模型列表</button>
@@ -549,7 +549,7 @@ const providerName = (id) => { const p = S && S.providers && S.providers.find((x
 function renderModelSwitch() {
   const uses = {agent: S.agent_provider, style: S.style_provider, desktop: (S.gateway || {}).provider};
   const same = uses.agent === uses.style && uses.style === uses.desktop;
-  $("#modelSwitch").innerHTML = ["deepseek", "claude"].map((id) => {
+  $("#modelSwitch").innerHTML = ["deepseek", "claude", "qwen"].map((id) => {
     const p = S.providers.find((x) => x.id === id); if (!p) return "";
     const on = same && uses.agent === id, ok = p.has_key && p.model;
     return `<button class="btn ${on ? "primary" : ""}" style="min-width:240px;text-align:left;padding:10px 14px" onclick="useProvider('${id}')">
@@ -711,7 +711,16 @@ async function saveProvider(id, extra = {}) {
 // Claude 常用型号（价格：每百万 token 输入 / 输出，美元；Haiku 为提示词 10 万 token 以内的价格）
 const CLAUDE_MODELS = [["claude-opus-5-5", "Opus 5.5 · 效果最好 · $4 / $20"], ["claude-sonnet-5-5", "Sonnet 5.5 · 更快 · $2 / $10"],
                        ["claude-haiku-5-5", "Haiku 5.5 · 最便宜 · $0.10 / $0.50"]];
-function pickModel(id, model) { provBox(id).querySelector("[data-f=model]").value = model; saveProvider(id); }
+// 通义千问：Qwen4-Max 预览版只能用 Token Plan（专属 Key 和地址），qwen-plus 等按量计费走普通百炼地址；选型号时顺手换地址
+const QWEN_MODELS = [["qwen4-max-preview", "Qwen4-Max 预览版 · Token Plan", "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"],
+                     ["qwen-plus", "qwen-plus · 按量计费", "https://dashscope.aliyuncs.com/compatible-mode/v1"]];
+const MODEL_CHIPS = {claude: CLAUDE_MODELS, qwen: QWEN_MODELS};
+function pickModel(id, model) {
+  const box = provBox(id), chip = (MODEL_CHIPS[id] || []).find((x) => x[0] === model);
+  box.querySelector("[data-f=model]").value = model;
+  if (chip && chip[2]) box.querySelector("[data-f=base_url]").value = chip[2];
+  saveProvider(id);
+}
 const clearKey = (id) => confirm("清除这个服务商的 API Key？") && saveProvider(id, {api_key: "-"});
 async function fetchModels(id) {
   await saveProvider(id);

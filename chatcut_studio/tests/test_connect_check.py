@@ -16,7 +16,10 @@ def _codex_request(tok, c):
     return c.post("/gateway/openai/v1/responses", json=body, headers={"Authorization": f"Bearer {tok}"})
 
 
-def test_agent_check_sees_desktop_tools_and_skills(isolated_data, fake_llm, fake_chatcut):
+def test_agent_check_sees_desktop_tools_and_skills(isolated_data, fake_llm, fake_chatcut, monkeypatch):
+    import shutil
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda n, *a, **k: "/usr/bin/codex" if n == "codex" else real_which(n, *a, **k))
     url, _ = fake_chatcut
     llm = fake_llm([{"content": "连接成功"}, {"content": None, "tool_calls": [tool_call("c1", "mcp__chatcut_desktop__get_project", {})]},
                     {"content": "16:9"}])

@@ -105,7 +105,8 @@ def test_codex_to_claude_round_trip_keeps_thinking_blocks(claude):
     assert "thinking-binding-controls-2026-08-01" in fake.requests[0]["headers"]["anthropic-beta"]
     assert req1["fallbacks"] == "default" and "server-side-fallback-2026-07-01" in fake.requests[0]["headers"]["anthropic-beta"]
     assert req1["tool_choice"] == {"type": "auto"} and req1["tools"][0]["input_schema"]["properties"]["cmd"]
-    assert fake.requests[0]["headers"]["x-api-key"] == "sk-ant-test-1234567890"
+    h = fake.requests[0]["headers"]                       # 旧版 SDK 用 x-api-key，2.x 用 Authorization: Bearer
+    assert h.get("x-api-key") == "sk-ant-test-1234567890" or h.get("authorization") == "Bearer sk-ant-test-1234567890"
     assistant = req2["messages"][1]
     assert assistant["role"] == "assistant" and assistant["content"][0] == {"type": "thinking", "thinking": "", "signature": "sig-AAA"}
     assert [b["type"] for b in assistant["content"]] == ["thinking", "text", "tool_use"]

@@ -73,7 +73,9 @@ PRESETS: list[Provider] = [
              key_env="DEEPSEEK_API_KEY", hint="填 OpenAI 兼容地址：官方是 https://api.deepseek.com，用中转服务就填中转地址；Key 在 platform.deepseek.com 申请"),
     Provider(id="qwen", label="通义千问（阿里云百炼）", kind="openai",
              base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", model="qwen-plus",
-             key_env="DASHSCOPE_API_KEY", hint="阿里云百炼控制台申请"),
+             key_env="DASHSCOPE_API_KEY",
+             hint="阿里云百炼控制台申请。用 Qwen4-Max 预览版（qwen4-max-preview）要开通 Token Plan，用它的专属 Key，"
+                  "地址是 Token Plan 的地址（点下面的型号按钮会自动填）；qwen-plus 等按量计费的模型用普通 Key 和 dashscope 地址"),
     Provider(id="kimi", label="Kimi（月之暗面）", kind="openai", base_url="https://api.moonshot.cn/v1",
              key_env="MOONSHOT_API_KEY", hint="国内 Key 用 api.moonshot.cn，海外 Key 用 api.moonshot.ai"),
     Provider(id="glm", label="智谱 GLM", kind="openai", base_url="https://open.bigmodel.cn/api/paas/v4",
