@@ -292,3 +292,13 @@ def test_runner_error_and_sse_replay():
         assert c.post(f"/api/run/{run_id}/approve", json={"id": "nope", "allow": True}).status_code == 404
         assert c.post("/api/prompt", json={"task": " "}).status_code == 400
         assert c.post("/api/env/rm-rf").status_code == 404
+
+
+def test_qwen_token_plan_preset_and_default_model(isolated_data):
+    """一键切换里的 Qwen Token Plan：专属地址、默认 qwen4-max-preview；改默认模型时清掉网关里单独指定的型号。"""
+    p = settings.load().provider("qwen_tp")
+    assert p.base_url == settings.QWEN_TOKEN_PLAN_URL and p.model == "qwen4-max-preview" and p.kind == "openai"
+    assert p.anthropic_endpoint() == settings.ANTHROPIC_COMPAT["qwen_tp"]
+    settings.update({"gateway": {"provider": "qwen_tp", "model": "deepseek-v4-pro"}})
+    s = settings.update({"providers": [{"id": "qwen_tp", "model": "qwen4-max"}], "gateway": {"model": ""}})
+    assert s.provider("qwen_tp").model == "qwen4-max" and s.gateway.model == "" and s.gateway.provider == "qwen_tp"

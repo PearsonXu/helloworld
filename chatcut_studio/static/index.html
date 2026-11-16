@@ -152,6 +152,7 @@
     <h2>用哪个模型</h2>
     <p class="sub">一键切换：剪辑 Agent、风格优化、歌曲工坊的配图提示词，以及 ChatCut Desktop 里的 Agent（接入后）都改用这里选的模型。Key 和具体型号在下面「模型服务商」里填。</p>
     <div id="modelSwitch" class="row" style="flex-wrap:wrap;gap:10px"></div>
+    <div id="defaultModel" class="row" style="margin-top:10px;align-items:flex-end;gap:8px"></div>
     <div id="modelMsg" class="muted" style="margin-top:6px"></div>
   </div>
 
@@ -549,14 +550,34 @@ const providerName = (id) => { const p = S && S.providers && S.providers.find((x
 function renderModelSwitch() {
   const uses = {agent: S.agent_provider, style: S.style_provider, desktop: (S.gateway || {}).provider};
   const same = uses.agent === uses.style && uses.style === uses.desktop;
-  $("#modelSwitch").innerHTML = ["deepseek", "claude", "qwen"].map((id) => {
+  $("#modelSwitch").innerHTML = SWITCH_PROVIDERS.map((id) => {
     const p = S.providers.find((x) => x.id === id); if (!p) return "";
     const on = same && uses.agent === id, ok = p.has_key && p.model;
     return `<button class="btn ${on ? "primary" : ""}" style="min-width:240px;text-align:left;padding:10px 14px" onclick="useProvider('${id}')">
       <div style="font-weight:600">${on ? "● " : "○ "}${esc(p.label.split("（")[0])}</div>
       <div style="font-size:12px;opacity:.85">${ok ? esc(p.model) : (p.has_key ? "还没选型号" : "还没填 Key")}</div></button>`;
   }).join("");
+  // 默认模型：当前选中的服务商用哪个型号（剪辑 Agent、风格优化、Desktop 里的 Agent 都用它）
+  const cur = S.providers.find((x) => x.id === uses.desktop);
+  $("#defaultModel").innerHTML = cur ? `<label style="flex:1;min-width:260px">${esc(providerName(cur.id))} 的默认模型
+      <input id="defModel" list="defModels" value="${esc(cur.model || "")}" placeholder="填型号，或点右边「获取列表」">
+      <datalist id="defModels">${(MODEL_CHIPS[cur.id] || []).map(([m]) => `<option value="${esc(m)}">`).join("")}</datalist></label>
+    <button class="btn small" onclick="defModelList('${cur.id}')">获取列表</button>
+    <button class="btn small primary" onclick="saveDefaultModel('${cur.id}')">保存</button>` : "";
   $("#modelMsg").textContent = same ? "" : `现在是分开设置的：剪辑 Agent 用 ${providerName(uses.agent)}，风格优化用 ${providerName(uses.style)}，Desktop 用 ${providerName(uses.desktop)}。点上面任意一个统一切换。`;
+}
+const SWITCH_PROVIDERS = ["deepseek", "qwen_tp"];      // 一键切换里的两个（Claude 等其他服务商在下面「模型服务商」里，也能在那里选）
+async function defModelList(id) {
+  try { const {models} = await api(`/api/providers/${id}/models`, {method: "POST"});
+        $("#defModels").innerHTML = models.map((m) => `<option value="${esc(m)}">`).join(""); $("#modelMsg").textContent = `${models.length} 个型号，点输入框选择`; }
+  catch (e) { $("#modelMsg").textContent = e.message; }
+}
+async function saveDefaultModel(id) {
+  const m = $("#defModel").value.trim(); if (!m) return;
+  try {   // 网关里单独指定的型号会盖过这里，一并清空，避免「改了默认模型却没生效」
+    S = await put("/api/settings", {providers: [{id, model: m}], gateway: {model: ""}});
+    await loadSettings(); $("#modelMsg").textContent = `${providerName(id)} 的默认模型已改为 ${m}，Desktop 里新开对话生效。`;
+  } catch (e) { $("#modelMsg").textContent = e.message; }
 }
 async function useProvider(id) {
   try {
@@ -711,16 +732,9 @@ async function saveProvider(id, extra = {}) {
 // Claude 常用型号（价格：每百万 token 输入 / 输出，美元；Haiku 为提示词 10 万 token 以内的价格）
 const CLAUDE_MODELS = [["claude-opus-5-5", "Opus 5.5 · 效果最好 · $4 / $20"], ["claude-sonnet-5-5", "Sonnet 5.5 · 更快 · $2 / $10"],
                        ["claude-haiku-5-5", "Haiku 5.5 · 最便宜 · $0.10 / $0.50"]];
-// 通义千问：Qwen4-Max 预览版只能用 Token Plan（专属 Key 和地址），qwen-plus 等按量计费走普通百炼地址；选型号时顺手换地址
-const QWEN_MODELS = [["qwen4-max-preview", "Qwen4-Max 预览版 · Token Plan", "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"],
-                     ["qwen-plus", "qwen-plus · 按量计费", "https://dashscope.aliyuncs.com/compatible-mode/v1"]];
-const MODEL_CHIPS = {claude: CLAUDE_MODELS, qwen: QWEN_MODELS};
-function pickModel(id, model) {
-  const box = provBox(id), chip = (MODEL_CHIPS[id] || []).find((x) => x[0] === model);
-  box.querySelector("[data-f=model]").value = model;
-  if (chip && chip[2]) box.querySelector("[data-f=base_url]").value = chip[2];
-  saveProvider(id);
-}
+const QWEN_TP_MODELS = [["qwen4-max-preview", "Qwen4-Max 预览版"]];
+const MODEL_CHIPS = {claude: CLAUDE_MODELS, qwen_tp: QWEN_TP_MODELS};
+function pickModel(id, model) { provBox(id).querySelector("[data-f=model]").value = model; saveProvider(id); }
 const clearKey = (id) => confirm("清除这个服务商的 API Key？") && saveProvider(id, {api_key: "-"});
 async function fetchModels(id) {
   await saveProvider(id);

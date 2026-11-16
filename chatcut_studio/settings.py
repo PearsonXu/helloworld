@@ -24,7 +24,9 @@ ANTHROPIC_COMPAT = {
     "kimi": "https://api.moonshot.cn/anthropic",
     "glm": "https://open.bigmodel.cn/api/anthropic",
     "qwen": "https://dashscope.aliyuncs.com/apps/anthropic",
+    "qwen_tp": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
 }
+QWEN_TOKEN_PLAN_URL = "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 
 
 class Provider(BaseModel):
@@ -65,6 +67,10 @@ class Provider(BaseModel):
 
 
 PRESETS: list[Provider] = [
+    Provider(id="qwen_tp", label="Qwen Token Plan（阿里云百炼）", kind="openai", base_url=QWEN_TOKEN_PLAN_URL,
+             model="qwen4-max-preview", key_env="QWEN_TOKEN_PLAN_API_KEY",
+             hint="阿里云百炼开通 Token Plan 后，用它的专属 Key（普通百炼 Key 不能用）。地址是 Token Plan 的 OpenAI 兼容地址，"
+                  "以百炼控制台给出的为准。qwen4-max-preview 是预览版，预览结束后下线，到时换一个型号"),
     Provider(id="claude", label="Claude（Anthropic API）", kind="anthropic", model="claude-opus-5-5",
              key_env="ANTHROPIC_API_KEY",
              hint="platform.claude.com 申请 API Key。用下面的按钮选型号：Opus 5.5 效果最好；Sonnet 5.5 更快、价格一半；"
@@ -74,8 +80,7 @@ PRESETS: list[Provider] = [
     Provider(id="qwen", label="通义千问（阿里云百炼）", kind="openai",
              base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", model="qwen-plus",
              key_env="DASHSCOPE_API_KEY",
-             hint="阿里云百炼控制台申请。用 Qwen4-Max 预览版（qwen4-max-preview）要开通 Token Plan，用它的专属 Key，"
-                  "地址是 Token Plan 的地址（点下面的型号按钮会自动填）；qwen-plus 等按量计费的模型用普通 Key 和 dashscope 地址"),
+             hint="阿里云百炼控制台申请，按量计费。用 Token Plan（比如 Qwen4-Max 预览版）请用上面的「Qwen Token Plan」"),
     Provider(id="kimi", label="Kimi（月之暗面）", kind="openai", base_url="https://api.moonshot.cn/v1",
              key_env="MOONSHOT_API_KEY", hint="国内 Key 用 api.moonshot.cn，海外 Key 用 api.moonshot.ai"),
     Provider(id="glm", label="智谱 GLM", kind="openai", base_url="https://open.bigmodel.cn/api/paas/v4",

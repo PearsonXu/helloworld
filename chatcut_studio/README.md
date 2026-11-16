@@ -95,9 +95,11 @@ python3 -m chatcut_studio.fake_chatcut              # 本地假 ChatCut（http:/
 
 需要带 libass 的 ffmpeg（`ffmpeg -filters | grep ass`）。字体从 `chatcut_studio/fonts/` 或 `~/.cache/lyric-mv/fonts/` 读取，找不到时由系统字体回退。
 
-## DeepSeek / Claude 一键切换
+## DeepSeek / Qwen Token Plan 一键切换
 
-「连接设置」最上面的「用哪个模型」：点 DeepSeek 或 Claude，剪辑 Agent、风格优化、歌曲工坊的配图提示词、ChatCut Desktop 里接入的 Agent 一起切换（也可以在下面分开设置）。Claude 用官方 Anthropic SDK（默认 `claude-opus-5-5`，自适应思考；Opus 5.5 / Sonnet 5.5 默认开启服务端拒答兜底 `fallbacks: "default"`），国内网络连不上官方地址时在 Claude 卡片里填中转 base_url。Claude 卡片上可以一键选型号：Opus 5.5（效果最好，$4 / $20 每百万 token）、Sonnet 5.5（$2 / $10）、Haiku 5.5（最便宜，$0.10 / $0.50；不支持拒答兜底，Studio 选它时自动不开）。
+首页「用哪个模型」：点 DeepSeek 或 Qwen Token Plan，剪辑 Agent、风格优化、歌曲工坊的配图提示词、ChatCut Desktop 里接入的 Agent 一起切换；下面的「默认模型」改当前服务商用的型号（可以点「获取列表」从服务商拉型号），保存时会清掉网关里单独指定的型号，避免改了不生效。Qwen Token Plan 是单独的服务商：用 Token Plan 专属 Key，地址默认 `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`，默认型号 `qwen4-max-preview`（预览版，下线后在「默认模型」里换一个）；按量计费的通义千问仍是另一个服务商。
+
+Claude 不在一键切换里了，但仍在「模型服务商」里，可以在「更多功能 → 面板直连设置」里分开选它。以前在「用哪个模型」里点 DeepSeek 或 Claude，剪辑 Agent、风格优化、歌曲工坊的配图提示词、ChatCut Desktop 里接入的 Agent 一起切换（也可以在下面分开设置）。Claude 用官方 Anthropic SDK（默认 `claude-opus-5-5`，自适应思考；Opus 5.5 / Sonnet 5.5 默认开启服务端拒答兜底 `fallbacks: "default"`），国内网络连不上官方地址时在 Claude 卡片里填中转 base_url。Claude 卡片上可以一键选型号：Opus 5.5（效果最好，$4 / $20 每百万 token）、Sonnet 5.5（$2 / $10）、Haiku 5.5（最便宜，$0.10 / $0.50；不支持拒答兜底，Studio 选它时自动不开）。
 
 ## 在 ChatCut Desktop 里用 DeepSeek / Claude（`gateway.py`、`responses_api.py`、`claude_chat.py`）
 
